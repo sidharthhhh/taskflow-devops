@@ -6,6 +6,7 @@ import com.taskflow.model.Task;
 import com.taskflow.model.TaskRequest;
 import com.taskflow.model.TaskStatus;
 import com.taskflow.repository.TaskRepository;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -36,13 +37,23 @@ class TaskControllerIntegrationTest {
     @Autowired
     private TaskRepository taskRepository;
 
+    private Task testTask1;
+    private Task testTask2;
+
+    @BeforeEach
+    void setUp() {
+        taskRepository.deleteAll();
+        testTask1 = taskRepository.save(new Task("Test Task 1", "Description 1", TaskStatus.TODO));
+        testTask2 = taskRepository.save(new Task("Test Task 2", "Description 2", TaskStatus.DONE));
+    }
+
     @Test
-    @DisplayName("GET /api/tasks should return all seeded tasks with HTTP 200")
+    @DisplayName("GET /api/tasks should return all tasks with HTTP 200")
     void testGetAllTasks_Returns200() throws Exception {
         mockMvc.perform(get("/api/tasks")
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$", hasSize(greaterThanOrEqualTo(3))))
+                .andExpect(jsonPath("$", hasSize(2)))
                 .andExpect(jsonPath("$[0].id").exists())
                 .andExpect(jsonPath("$[0].title").exists())
                 .andExpect(jsonPath("$[0].status").exists());
@@ -55,19 +66,18 @@ class TaskControllerIntegrationTest {
                         .param("status", "DONE")
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[*].status", everyItem(is("DONE"))));
+                .andExpect(jsonPath("$", hasSize(1)))
+                .andExpect(jsonPath("$[0].status", is("DONE")));
     }
 
     @Test
     @DisplayName("GET /api/tasks/{id} should return the task when ID exists")
     void testGetTaskById_Success() throws Exception {
-        Task firstTask = taskRepository.findAll().get(0);
-
-        mockMvc.perform(get("/api/tasks/{id}", firstTask.getId())
+        mockMvc.perform(get("/api/tasks/{id}", testTask1.getId())
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.id").value(firstTask.getId()))
-                .andExpect(jsonPath("$.title").value(firstTask.getTitle()));
+                .andExpect(jsonPath("$.id").value(testTask1.getId()))
+                .andExpect(jsonPath("$.title").value(testTask1.getTitle()));
     }
 
     @Test
@@ -114,14 +124,13 @@ class TaskControllerIntegrationTest {
     @Test
     @DisplayName("PUT /api/tasks/{id} should update task and return HTTP 200")
     void testUpdateTask_Success_Returns200() throws Exception {
-        Task firstTask = taskRepository.findAll().get(0);
         TaskRequest updateRequest = new TaskRequest("Updated Title", "Updated Description", TaskStatus.DONE);
 
-        mockMvc.perform(put("/api/tasks/{id}", firstTask.getId())
+        mockMvc.perform(put("/api/tasks/{id}", testTask1.getId())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(updateRequest)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.id").value(firstTask.getId()))
+                .andExpect(jsonPath("$.id").value(testTask1.getId()))
                 .andExpect(jsonPath("$.title").value("Updated Title"))
                 .andExpect(jsonPath("$.description").value("Updated Description"))
                 .andExpect(jsonPath("$.status").value("DONE"));
@@ -142,13 +151,11 @@ class TaskControllerIntegrationTest {
     @Test
     @DisplayName("DELETE /api/tasks/{id} should return HTTP 204 No Content")
     void testDeleteTask_Success_Returns204() throws Exception {
-        Task taskToDelete = taskRepository.save(new Task("Temporary Task", "To be deleted", TaskStatus.TODO));
-
-        mockMvc.perform(delete("/api/tasks/{id}", taskToDelete.getId()))
+        mockMvc.perform(delete("/api/tasks/{id}", testTask2.getId()))
                 .andExpect(status().isNoContent());
 
         // Verify task no longer exists
-        mockMvc.perform(get("/api/tasks/{id}", taskToDelete.getId()))
+        mockMvc.perform(get("/api/tasks/{id}", testTask2.getId()))
                 .andExpect(status().isNotFound());
     }
 

@@ -34,7 +34,6 @@ taskflow-devops/
 │       │   │   │   ├── GlobalExceptionHandler.java # @RestControllerAdvice (400, 404, 500)
 │       │   │   │   └── ErrorResponse.java       # Standard error format
 │       │   │   └── config/
-│       │   │       ├── DataSeeder.java          # Inserts 3 sample tasks on startup
 │       │   │       └── OpenApiConfig.java       # Swagger / OpenAPI specification
 │       │   └── resources/
 │       │       └── application.yml              # Config reading environment variables with defaults
