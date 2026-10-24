@@ -83,6 +83,44 @@ The application runs on `http://localhost:8080`.
 
 ---
 
+## 🐳 Docker & Docker Compose
+
+### Option 1: Run with Docker Compose (Recommended: App + PostgreSQL)
+
+Start both TaskFlow REST API and PostgreSQL with one command from the project root:
+```bash
+docker compose up --build -d
+```
+- **API & Swagger UI**: [http://localhost:8080/swagger-ui.html](http://localhost:8080/swagger-ui.html)
+- **Actuator Health**: [http://localhost:8080/actuator/health](http://localhost:8080/actuator/health)
+- **PostgreSQL Database**: `localhost:5432` (Database: `taskflowdb`, Username: `postgres`, Password: `postgres`)
+
+View container logs:
+```bash
+docker compose logs -f app
+```
+
+Stop the containers:
+```bash
+docker compose down
+```
+
+### Option 2: Run Standalone Container (In-Memory H2 Database)
+
+Build and run just the application container with the embedded H2 database:
+```bash
+# Build the Docker image
+docker build -t taskflow-app ./app
+
+# Run the container
+docker run -d -p 8080:8080 --name taskflow taskflow-app
+```
+
+Stop and remove the container:
+```bash
+docker stop taskflow && docker rm taskflow
+```
+
 ## 📑 Interactive Swagger UI
 
 Open in your browser:
