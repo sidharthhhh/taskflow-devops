@@ -67,8 +67,6 @@ The application settings are externalized into `app/.env` with defaults in `app/
 | `SPRING_JPA_HIBERNATE_DDL_AUTO` | `update` | Schema generation strategy |
 | `SPRING_H2_CONSOLE_ENABLED` | `true` | Enables `/h2-console` |
 
-> To switch to **PostgreSQL**, simply uncomment the PostgreSQL block in `app/.env`.
-
 ---
 
 ## 🚀 How to Run the Application
@@ -83,31 +81,28 @@ The application runs on `http://localhost:8080`.
 
 ---
 
-## 🐳 Docker & Docker Compose
+## 🐳 Docker
 
-### Option 1: Run with Docker Compose (Recommended: App + PostgreSQL)
-
-Start both TaskFlow REST API and PostgreSQL with one command from the project root:
+### Run with Docker Compose
+Run the containerized application with a single command from the project root:
 ```bash
 docker compose up --build -d
 ```
 - **API & Swagger UI**: [http://localhost:8080/swagger-ui.html](http://localhost:8080/swagger-ui.html)
 - **Actuator Health**: [http://localhost:8080/actuator/health](http://localhost:8080/actuator/health)
-- **PostgreSQL Database**: `localhost:5432` (Database: `taskflowdb`, Username: `postgres`, Password: `postgres`)
+- **H2 Web Console**: [http://localhost:8080/h2-console](http://localhost:8080/h2-console)
 
-View container logs:
+View logs:
 ```bash
 docker compose logs -f app
 ```
 
-Stop the containers:
+Stop the container:
 ```bash
 docker compose down
 ```
 
-### Option 2: Run Standalone Container (In-Memory H2 Database)
-
-Build and run just the application container with the embedded H2 database:
+### Run with Docker CLI
 ```bash
 # Build the Docker image
 docker build -t taskflow-app ./app

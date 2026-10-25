@@ -1,9 +1,6 @@
 version: '3.8'
 
 services:
-  # ==========================================
-  # Spring Boot REST API
-  # ==========================================
   app:
     build:
       context: ./app
@@ -14,39 +11,4 @@ services:
       - "8080:8080"
     environment:
       - SERVER_PORT=8080
-      - SPRING_APPLICATION_NAME=TaskFlow
-      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/taskflowdb
-      - SPRING_DATASOURCE_USERNAME=postgres
-      - SPRING_DATASOURCE_PASSWORD=postgres
-      - SPRING_DATASOURCE_DRIVER_CLASS_NAME=org.postgresql.Driver
-      - SPRING_JPA_DATABASE_PLATFORM=org.hibernate.dialect.PostgreSQLDialect
-      - SPRING_JPA_HIBERNATE_DDL_AUTO=update
-      - SPRING_H2_CONSOLE_ENABLED=false
-    depends_on:
-      postgres:
-        condition: service_healthy
 
-  # ==========================================
-  # PostgreSQL Database Service
-  # ==========================================
-  postgres:
-    image: postgres:16-alpine
-    container_name: taskflow-postgres
-    restart: unless-stopped
-    ports:
-      - "5432:5432"
-    environment:
-      - POSTGRES_DB=taskflowdb
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d taskflowdb"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
-volumes:
-  postgres_data:
-    driver: local
