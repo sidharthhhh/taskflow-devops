@@ -295,9 +295,9 @@ flowchart TD
                 EBS[("AWS EBS gp3 Volume (1Gi)<br/>via AWS EBS CSI Driver")]
             end
 
-            IGW <--> NLB
-            IGW <--> NATGW
-            NATGW <--> PrivateSubnets
+            IGW --> NLB
+            IGW --> NATGW
+            NATGW --> AppC
             NLB --> AppSvc
             AppSvc --> AppC
             AppC -->|JDBC| DBSvc
@@ -330,7 +330,7 @@ flowchart TD
     GHOIDC --> GHIAMRole
     GHIAMRole -->|Push Docker Image| ECR
     GHIAMRole -->|Update Deployment| EKSControlPlane
-    EKSControlPlane -.->|Orchestrates| NodeGroup
+    EKSControlPlane -.->|Orchestrates Pods| AppC
     AppC -->|Pulls Image| ECR
     AppC -.->|Reads Secret via IRSA| SecretsMgr
     PostgresPod -.->|pg_dump CronJob| S3Backup

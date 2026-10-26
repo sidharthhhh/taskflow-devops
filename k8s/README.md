@@ -10,29 +10,29 @@ The deployment follows cloud-native best practices with zero-downtime rolling up
 
 ```mermaid
 flowchart TD
-    subgraph Client Traffic
-        User[External Client / Browser]
+    subgraph ClientTraffic ["Client Traffic"]
+        User["External Client / Browser"]
     end
 
-    subgraph "Kubernetes Cluster (Namespace: taskflow)"
-        subgraph Ingress / Service Layer
+    subgraph Cluster ["Kubernetes Cluster (Namespace: taskflow)"]
+        subgraph IngressLayer ["Ingress &amp; Service Layer"]
             LocalSvc["Local Overlay: NodePort 30080"]
             EKSSvc["EKS Overlay: AWS NLB LoadBalancer"]
             AppService["taskflow-service:8080 (ClusterIP)"]
         end
 
-        subgraph "Application Layer (2-5 Replicas)"
-            HPA[Horizontal Pod Autoscaler<br/>CPU > 70% | Mem > 80%] -.-> AppPods
-            PDB[PodDisruptionBudget<br/>minAvailable: 1] -.-> AppPods
+        subgraph ApplicationLayer ["Application Layer (2-5 Replicas)"]
+            HPA["Horizontal Pod Autoscaler<br/>(CPU 70% / Mem 80%)"]
+            PDB["PodDisruptionBudget<br/>(minAvailable: 1)"]
             
-            subgraph AppPods ["taskflow-app Pods"]
+            subgraph PodGroup ["taskflow-app Pods"]
                 InitC["initContainer: wait-for-postgres<br/>(busybox:1.36 + nc)"]
                 AppC["App Container: taskflow-app<br/>(Non-root UID 10001, Java 17)"]
                 InitC -->|Wait for 5432 OK| AppC
             end
         end
 
-        subgraph "Persistence Layer"
+        subgraph PersistenceLayer ["Persistence Layer"]
             DBService["postgres-service:5432 (ClusterIP)"]
             PostgresSS["postgres-0 (StatefulSet)"]
             PVC["postgres-storage PVC (1Gi)"]
@@ -45,10 +45,49 @@ flowchart TD
     LocalSvc --> AppService
     EKSSvc --> AppService
     AppService --> AppC
+    HPA -.-> AppC
+    PDB -.-> AppC
     AppC -->|JDBC| DBService
     DBService --> PostgresSS
     PostgresSS --- PVC
     PVC --- PV
+```
+
+### ASCII Architecture Reference
+
+```text
+[ External Client / Browser ]
+         |
+         +-------------------------------------+
+         |                                     |
+         v (Local K3s)                         v (AWS EKS)
+  NodePort 30080                   AWS Network Load Balancer (NLB)
+         |                                     |
+         +------------------+------------------+
+                            |
+                            v
+             taskflow-service:8080 (ClusterIP)
+                            |
+   +------------------------v------------------------+
+   | Application Layer: taskflow-app (2..5 Pods)     |
+   |   - HPA: Scales 2..5 at 70% CPU / 80% RAM       |
+   |   - PDB: minAvailable: 1                        |
+   |                                                 |
+   |   Pod Lifecycle:                                |
+   |     1. [initContainer: wait-for-postgres]       |
+   |           | (polls port 5432 until ready)       |
+   |           v                                     |
+   |     2. [App Container: taskflow-app (Java 17)]  |
+   +------------------------+------------------------+
+                            | JDBC Connection (Port 5432)
+                            v
+             postgres-service:5432 (ClusterIP)
+                            |
+             postgres-0 (PostgreSQL 16 StatefulSet)
+                            |
+             postgres-storage PVC (1Gi)
+                            |
+             PersistentVolume (local-path / AWS EBS gp3)
 ```
 
 ---
