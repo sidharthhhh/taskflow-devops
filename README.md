@@ -4,6 +4,10 @@ TaskFlow is a production-grade To-Do list REST API built with **Java 17** and **
 
 ---
 
+> 📌 **Quick Navigation**: [🌐 AWS Cloud Architecture](#-whole-aws-cloud-environment-architecture) • [🤝 10 Manual Handshakes](#-manual-handshakes--required-human-efforts) • [☸️ Local K3s](#option-a-local-k3s-deployment-using-k3d) • [☁️ AWS EKS](#option-b-aws-eks-deployment) • [🚀 CI/CD](.github/README.md) • [🌍 Terraform IaC](terraform/README.md) • [🔧 Troubleshooting](#-comprehensive-troubleshooting-guide)
+
+---
+
 ## 📋 Features
 
 - **Framework**: Spring Boot 3.3.x, Spring Data JPA, Bean Validation
@@ -26,6 +30,10 @@ TaskFlow is a production-grade To-Do list REST API built with **Java 17** and **
 
 ```text
 taskflow-devops/
+├── .github/
+│   ├── README.md                                # GitHub Actions CI/CD pipeline documentation
+│   └── workflows/
+│       └── ci-cd.yml                            # Multi-stage CI/CD workflow (Test, Scan, ECR, EKS)
 ├── app/
 │   ├── pom.xml                                  # Maven dependencies & build configuration
 │   ├── Dockerfile                               # Multi-stage optimized application container
@@ -245,6 +253,238 @@ Once the `EXTERNAL-IP` appears (e.g., `k8s-taskflow-xxx.elb.us-east-1.amazonaws.
 ```bash
 kubectl delete -k k8s/overlays/eks
 ```
+
+---
+
+## 🌐 Whole AWS Cloud Environment Architecture
+
+The target cloud infrastructure for TaskFlow is designed around high availability, security isolation, zero-downtime deployments, and disaster recovery on Amazon Web Services (AWS):
+
+```mermaid
+flowchart TD
+    subgraph Internet ["Public Internet"]
+        Client[External Clients / Browser / Swagger UI]
+        GHRunner[GitHub Actions CI/CD Runner]
+    end
+
+    subgraph AWS ["AWS Cloud (Region: us-east-1)"]
+        subgraph VPC ["VPC: 10.0.0.0/16"]
+            IGW["Internet Gateway"]
+            
+            subgraph PublicSubnets ["Public Subnets (us-east-1a & us-east-1b)"]
+                NLB["AWS Network Load Balancer (NLB)<br/>Internet-facing :80 -> :8080"]
+                NATGW["NAT Gateway (in us-east-1a)<br/>Elastic IP"]
+            end
+
+            subgraph PrivateSubnets ["Private Subnets (us-east-1a & us-east-1b)"]
+                subgraph NodeGroup ["EKS Managed Node Group (2..4 x t3.medium)"]
+                    subgraph K8sNamespace ["Kubernetes Namespace: taskflow"]
+                        AppSvc["taskflow-service:8080 (ClusterIP)"]
+                        
+                        subgraph Pods ["TaskFlow Spring Boot Pods (2..5 Replicas)"]
+                            InitC["initContainer: wait-for-postgres"]
+                            AppC["Container: taskflow-app<br/>Java 17, Non-root UID 10001"]
+                            InitC -->|Wait for 5432| AppC
+                        end
+                        
+                        DBSvc["postgres-service:5432 (ClusterIP)"]
+                        PostgresPod["PostgreSQL 16 (StatefulSet)"]
+                    end
+                end
+                
+                EBS[("AWS EBS gp3 Volume (1Gi)<br/>via AWS EBS CSI Driver")]
+            end
+
+            IGW <--> NLB
+            IGW <--> NATGW
+            NATGW <--> PrivateSubnets
+            NLB --> AppSvc
+            AppSvc --> AppC
+            AppC -->|JDBC| DBSvc
+            DBSvc --> PostgresPod
+            PostgresPod --- EBS
+        end
+
+        subgraph ManagedServices ["AWS Managed Cloud Services"]
+            EKSControlPlane["Amazon EKS Control Plane (v1.30)<br/>Private & Public API Server"]
+            ECR["Amazon ECR: taskflow-app<br/>Vulnerability Scan on Push | 14d/30-img Lifecycle"]
+            SecretsMgr["AWS Secrets Manager<br/>taskflow/prod/db-credentials"]
+            S3Backup["Amazon S3 Backup Bucket<br/>AES-256 Encrypted | Versioned | 30d Lifecycle"]
+            Budgets["AWS Budgets Guardrail<br/>$25/mo Spend Limit | 80% & 100% Alerts"]
+            
+            subgraph RemoteState ["Terraform Remote State Foundation"]
+                S3State["S3 Bucket: taskflow-prod-tfstate<br/>AES-256, Versioning, Prevent Destroy"]
+                DDBLock["DynamoDB Table: taskflow-prod-tflocks<br/>Pay-Per-Request LockID"]
+            end
+        end
+
+        subgraph SecurityOIDC ["Identity & Access Management (IAM)"]
+            GHOIDC["GitHub OIDC Provider<br/>token.actions.githubusercontent.com"]
+            GHIAMRole["IAM Role: github-actions-role<br/>Scoped strictly to repo:owner/repo"]
+            IRSA["EKS OIDC Provider (IRSA)<br/>EBS CSI Driver & External Secrets"]
+        end
+    end
+
+    Client --> IGW
+    GHRunner -->|Keyless OIDC Token| GHOIDC
+    GHOIDC --> GHIAMRole
+    GHIAMRole -->|Push Docker Image| ECR
+    GHIAMRole -->|Update Deployment| EKSControlPlane
+    EKSControlPlane -.->|Orchestrates| NodeGroup
+    AppC -->|Pulls Image| ECR
+    AppC -.->|Reads Secret via IRSA| SecretsMgr
+    PostgresPod -.->|pg_dump CronJob| S3Backup
+    IRSA -.->|EBS Volume Attach| EBS
+```
+
+---
+
+## 🤝 Manual Handshakes & Required Human Efforts
+
+While Terraform, Docker, and GitHub Actions automate over 95% of provisioning, real-world cloud security and account boundaries require **10 critical manual handshakes**. Here is the complete operational checklist:
+
+| # | Handshake Touchpoint | Why Human Effort is Mandatory | Exact Action Required | Location / Command |
+|---|---|---|---|---|
+| **1** | **AWS CLI & Credentials** | IaC cannot invent cloud permissions; it requires human authentication. | Run `aws configure` with an IAM user with EKS, VPC, EC2, IAM, ECR, S3, Secrets Manager, and Budgets permissions. | Local Terminal (`aws configure`) |
+| **2** | **Remote State Bootstrap** | Terraform cannot write to an S3 bucket before that bucket exists (chicken-and-egg dilemma). | Run `cd terraform/bootstrap && terraform init && terraform apply`. Copy the resulting S3 bucket name. | `terraform/bootstrap/` |
+| **3** | **Variable Customization** | Real emails, private repositories, and AWS regions must never be hardcoded in Git. | Copy `terraform.tfvars.example` to `terraform.tfvars` and set your real `budget_alert_email`, `github_repo`, and `aws_region`. | `terraform/terraform.tfvars` |
+| **4** | **AWS Budget Email Confirmation** | AWS SNS anti-spam compliance requires human verification before sending cost breach alerts. | Open your email inbox (`budget_alert_email`) and **click "Confirm Subscription"** in the automated AWS Budgets email. | Personal Email Inbox |
+| **5** | **GitHub Actions OIDC Secret** | GitHub Actions runs externally and needs permission to assume your newly created AWS IAM role. | Retrieve the IAM role ARN via `terraform output -raw github_actions_role_arn` and save it as secret `AWS_ROLE_ARN`. | **GitHub Repo Settings > Secrets & variables > Actions** |
+| **6** | **Local Kubeconfig Context** | Your local machine's `kubectl` CLI must be pointed to the new cloud cluster endpoint. | Run `aws eks update-kubeconfig --region us-east-1 --name taskflow-prod-cluster` to establish cluster access. | Local Terminal (`aws eks update-kubeconfig`) |
+| **7** | **AWS Load Balancer Controller** | Kubernetes service annotations for AWS NLB cannot provision cloud load balancers without the controller. | Install the AWS Load Balancer Controller via Helm or eksctl (`helm install aws-load-balancer-controller ...`). | EKS Cluster (`kube-system` namespace) |
+| **8** | **External Secrets Operator** | Production database passwords must never be stored in plain text inside Git or Kubernetes manifests. | Install External Secrets Operator (or sync `taskflow/prod/db-credentials` into `secret.yaml`) before starting app pods. | EKS Cluster / Secrets Manager |
+| **9** | **GitHub Deployment Approval Gate** | Production releases should be gated behind human authorization in enterprise environments. | In GitHub Settings, create environment `production` with required reviewers so deployments pause for your approval. | **GitHub Repo Settings > Environments > production** |
+| **10**| **Teardown Sequence Order** | Dynamic NLBs and EBS ENIs created by Kubernetes will deadlock VPC deletion if destroyed out of order. | **Always delete Kubernetes services first** (`kubectl delete -k k8s/overlays/eks`), wait 2–3 minutes, and *then* run `terraform destroy`. | Terminal (`kubectl delete` -> `terraform destroy`) |
+
+---
+
+### Step-by-Step Instructions for Each Handshake
+
+### 1. AWS CLI Credentials & Account Identity Handshake
+- **Why Manual**: Terraform and AWS CLI cannot invent cloud permissions; they require authenticated human credentials.
+- **Action Required**:
+  ```bash
+  aws configure
+  # Enter AWS Access Key ID, Secret Access Key, default region (e.g. us-east-1)
+  
+  # Verify active account identity
+  aws sts get-caller-identity
+  ```
+- **Permission Check**: Ensure your IAM identity possesses permissions for VPC, EC2, EKS, IAM, ECR, S3, Secrets Manager, and Budgets.
+
+---
+
+### 2. Remote State Bootstrap Handshake (Run Once)
+- **Why Manual**: Terraform cannot store state inside an S3 bucket before that bucket actually exists (chicken-and-egg dilemma).
+- **Action Required**:
+  ```bash
+  cd terraform/bootstrap
+  terraform init
+  terraform apply
+  ```
+- **Output Handshake**: Note the output `state_bucket_name` (e.g., `taskflow-prod-tfstate-123456789012`). Configure this bucket name into `terraform/backend.hcl` or `terraform/versions.tf`.
+
+---
+
+### 3. Variable Configuration Handshake (`terraform.tfvars`)
+- **Why Manual**: Real-world identifiers (your personal email, custom region, repository path) must never be hardcoded into public repositories.
+- **Action Required**:
+  ```bash
+  cd terraform
+  cp terraform.tfvars.example terraform.tfvars
+  ```
+- Edit `terraform.tfvars` with:
+  - `budget_alert_email = "your-actual-email@example.com"`
+  - `github_repo = "your-github-username/taskflow-devops"`
+  - `aws_region = "us-east-1"`
+
+---
+
+### 4. AWS Budget Email Confirmation Handshake
+- **Why Manual**: AWS SNS / Budgets enforces anti-spam compliance by requiring explicit human email verification.
+- **Action Required**:
+  1. After running `terraform apply`, open your email inbox (`budget_alert_email`).
+  2. Find the automated email from **AWS Notifications / AWS Budgets**.
+  3. **Click "Confirm Subscription"**. Until clicked, AWS will suppress threshold breach emails!
+
+---
+
+### 5. GitHub Actions OIDC Secret Handshake (`AWS_ROLE_ARN`)
+- **Why Manual**: GitHub Actions runs outside AWS and requires permission to assume your newly created IAM role.
+- **Action Required**:
+  1. Retrieve the IAM Role ARN from Terraform output:
+     ```bash
+     terraform output -raw github_actions_role_arn
+     ```
+  2. In your GitHub repository, open **Settings > Secrets and variables > Actions**.
+  3. Click **New repository secret**.
+  4. Name: `AWS_ROLE_ARN`
+  5. Value: Paste the output ARN (e.g., `arn:aws:iam::123456789012:role/taskflow-prod-github-actions-role`).
+
+---
+
+### 6. Local Kubeconfig Connection Handshake
+- **Why Manual**: Your local machine's `kubectl` CLI does not automatically know where your new cloud cluster lives.
+- **Action Required**:
+  ```bash
+  aws eks update-kubeconfig --region us-east-1 --name taskflow-prod-cluster
+  kubectl get nodes -o wide
+  ```
+
+---
+
+### 7. AWS Load Balancer Controller Installation Handshake
+- **Why Manual**: The EKS service overlay specifies an AWS Network Load Balancer (`service.beta.kubernetes.io/aws-load-balancer-type: external`). Kubernetes cannot create native AWS NLBs without the controller installed.
+- **Action Required**:
+  ```bash
+  # 1. Associate IAM OIDC Provider with your cluster
+  eksctl utils associate-iam-oidc-provider --cluster taskflow-prod-cluster --approve
+
+  # 2. Install AWS Load Balancer Controller via Helm
+  helm repo add eks https://aws.github.io/eks-charts
+  helm repo update
+  helm install aws-load-balancer-controller eks/aws-load-balancer-controller \
+    -n kube-system \
+    --set clusterName=taskflow-prod-cluster \
+    --set serviceAccount.create=true
+  ```
+
+---
+
+### 8. External Secrets Operator / DB Credentials Sync Handshake
+- **Why Manual**: Production database passwords should never be stored in plain text inside Git or Kubernetes manifests.
+- **Action Required**:
+  - Terraform generates a random 24-character password in AWS Secrets Manager (`taskflow/prod/db-credentials`).
+  - Install **External Secrets Operator** (`helm install external-secrets external-secrets/external-secrets -n kube-system`) or inject the credentials into Kubernetes `secret.yaml` before deployment so Spring Boot can authenticate.
+
+---
+
+### 9. GitHub Protected Environment Deployment Gate (Optional but Recommended)
+- **Why Manual**: In production enterprise environments, automatic pushes to production should be gated behind human authorization.
+- **Action Required**:
+  1. In GitHub, open **Settings > Environments > New environment > `production`**.
+  2. Check **Required reviewers** and assign yourself or your team lead.
+  3. When CI finishes testing, GitHub Actions will pause and wait for you to click **"Review deployments -> Approve and deploy"**.
+
+---
+
+### 10. Destruction Order Handshake (Preventing VPC Deadlocks)
+- **Why Manual**: When an AWS Network Load Balancer or EBS volume is created dynamically by Kubernetes, AWS attaches Elastic Network Interfaces (ENIs) inside your VPC subnets. If you run `terraform destroy` first, the VPC deletion will fail with `DependencyViolation`!
+- **Action Required (Strict Destruction Sequence)**:
+  ```bash
+  # Step 1: ALWAYS delete Kubernetes services and StatefulSets first:
+  kubectl delete -k k8s/overlays/eks
+
+  # Step 2: Wait 2-3 minutes for AWS to release Load Balancers and ENIs
+
+  # Step 3: Now cleanly destroy AWS infrastructure:
+  cd terraform
+  terraform destroy -auto-approve
+
+  # Step 4: (Optional) Destroy bootstrap state storage:
+  cd bootstrap
+  terraform destroy -auto-approve
+  ```
 
 ---
 

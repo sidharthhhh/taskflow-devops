@@ -1,0 +1,289 @@
+name: TaskFlow CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - k8s
+      - sidharth/feature
+      - 'feature/**'
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.gitignore'
+  pull_request:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+    inputs:
+      deploy_to_eks:
+        description: 'Deploy to AWS EKS after successful build'
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  id-token: write   # Required for AWS OIDC authentication
+  contents: read    # Required to checkout the repository
+  security-events: write # Required for uploading Trivy SARIF results
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  EKS_CLUSTER_NAME: ${{ vars.EKS_CLUSTER_NAME || 'taskflow-prod-cluster' }}
+  ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY || 'taskflow-app' }}
+
+jobs:
+  # ===========================================================================
+  # 1. CI - Java Build, Unit & Integration Tests
+  # ===========================================================================
+  test-and-verify:
+    name: Maven Build & Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Run Maven Tests (Unit & Integration)
+        run: mvn -B clean verify --file app/pom.xml
+
+      - name: Upload Test Results Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-test-reports
+          path: app/target/surefire-reports/
+          retention-days: 7
+
+  # ===========================================================================
+  # 2. CI - Validate Infrastructure as Code (Terraform & Kubernetes)
+  # ===========================================================================
+  validate-infrastructure:
+    name: Validate IaC & K8s Manifests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.10.0
+
+      - name: Check Terraform Formatting
+        run: terraform fmt -check -recursive terraform/
+
+      - name: Initialize & Validate Root Terraform
+        run: |
+          cd terraform
+          terraform init -backend=false
+          terraform validate
+
+      - name: Initialize & Validate Bootstrap Terraform
+        run: |
+          cd terraform/bootstrap
+          terraform init -backend=false
+          terraform validate
+
+      - name: Set up Kustomize & Kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Validate Local Kubernetes Overlay
+        run: kubectl kustomize k8s/overlays/local > /dev/null
+
+      - name: Validate EKS Production Kubernetes Overlay
+        run: kubectl kustomize k8s/overlays/eks > /dev/null
+
+  # ===========================================================================
+  # 3. CI - Docker Build, Trivy Security Scan & Local Smoke Test
+  # ===========================================================================
+  docker-build-and-scan:
+    name: Docker Build & Vulnerability Scan
+    runs-on: ubuntu-latest
+    needs: [test-and-verify, validate-infrastructure]
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Local Container Image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./app
+          file: ./app/Dockerfile
+          load: true
+          tags: |
+            taskflow-app:${{ github.sha }}
+            taskflow-app:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Run Trivy Vulnerability Scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: taskflow-app:${{ github.sha }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'HIGH,CRITICAL'
+          ignore-unfixed: true
+
+      - name: Upload Trivy Scan Results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+      - name: Run Container Smoke Test
+        run: |
+          echo "Starting container for local health check verification..."
+          docker run -d --name smoke-test-app -p 8080:8080 \
+            -e SPRING_DATASOURCE_URL="jdbc:h2:mem:smoketestdb;DB_CLOSE_DELAY=-1" \
+            taskflow-app:${{ github.sha }}
+          
+          # Wait for application startup
+          echo "Waiting for /actuator/health readiness..."
+          for i in {1..30}; do
+            STATUS=$(curl -s http://localhost:8080/actuator/health | grep '"status":"UP"' || true)
+            if [ -n "$STATUS" ]; then
+              echo "Container health check passed!"
+              docker stop smoke-test-app && docker rm smoke-test-app
+              exit 0
+            fi
+            sleep 2
+          done
+          
+          echo "Health check timed out. Dumping container logs:"
+          docker logs smoke-test-app
+          docker stop smoke-test-app && docker rm smoke-test-app
+          exit 1
+
+  # ===========================================================================
+  # 4. CD - Push Container Image to Amazon ECR (Keyless OIDC)
+  # ===========================================================================
+  push-to-ecr:
+    name: Push Image to Amazon ECR
+    runs-on: ubuntu-latest
+    needs: [docker-build-and-scan]
+    if: |
+      (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/k8s')) ||
+      (github.event_name == 'workflow_dispatch' && inputs.deploy_to_eks == true)
+    outputs:
+      image_tag: ${{ steps.image_info.outputs.image_tag }}
+      image_uri: ${{ steps.image_info.outputs.image_uri }}
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Check AWS Role Secret
+        id: check_role
+        run: |
+          if [ -z "${{ secrets.AWS_ROLE_ARN }}" ]; then
+            echo "::warning ::AWS_ROLE_ARN secret is not configured in repository. Skipping ECR push."
+            echo "configured=false" >> $GITHUB_OUTPUT
+          else
+            echo "configured=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Configure AWS Credentials (Keyless OIDC)
+        if: steps.check_role.outputs.configured == 'true'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions-ECR-Push
+
+      - name: Log in to Amazon ECR
+        if: steps.check_role.outputs.configured == 'true'
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        if: steps.check_role.outputs.configured == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and Push Docker Image to ECR
+        if: steps.check_role.outputs.configured == 'true'
+        id: build-push-ecr
+        uses: docker/build-push-action@v6
+        with:
+          context: ./app
+          file: ./app/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Set Image Output Information
+        id: image_info
+        run: |
+          if [ "${{ steps.check_role.outputs.configured }}" == "true" ]; then
+            REGISTRY="${{ steps.login-ecr.outputs.registry }}"
+            echo "image_tag=${{ github.sha }}" >> $GITHUB_OUTPUT
+            echo "image_uri=${REGISTRY}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}" >> $GITHUB_OUTPUT
+          fi
+
+  # ===========================================================================
+  # 5. CD - Deploy to Amazon EKS (Zero-Downtime Rolling Update)
+  # ===========================================================================
+  deploy-to-eks:
+    name: Deploy to Amazon EKS
+    runs-on: ubuntu-latest
+    needs: [push-to-ecr]
+    if: |
+      needs.push-to-ecr.outputs.image_uri != '' &&
+      (
+        (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+        (github.event_name == 'workflow_dispatch' && inputs.deploy_to_eks == true)
+      )
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials (Keyless OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions-EKS-Deploy
+
+      - name: Update Kubeconfig for EKS
+        run: |
+          aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.EKS_CLUSTER_NAME }}
+
+      - name: Set up Kustomize & Kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Deploy to EKS with Immutable Image Tag
+        run: |
+          echo "Deploying image: ${{ needs.push-to-ecr.outputs.image_uri }}"
+          cd k8s/overlays/eks
+          kustomize edit set image taskflow-app=${{ needs.push-to-ecr.outputs.image_uri }}
+          kubectl apply -k .
+
+      - name: Await Rolling Update Rollout
+        run: |
+          echo "Waiting for rolling deployment to finish..."
+          kubectl rollout status deployment/taskflow-app -n taskflow --timeout=180s
+
+      - name: Verify Live Endpoints in Namespace
+        run: |
+          kubectl get pods,svc -n taskflow -o wide
+
+      - name: Rollback on Deployment Failure
+        if: failure()
+        run: |
+          echo "Deployment failed! Rolling back to previous revision..."
+          kubectl rollout undo deployment/taskflow-app -n taskflow
+          kubectl rollout status deployment/taskflow-app -n taskflow --timeout=120s
