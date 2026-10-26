@@ -20,17 +20,17 @@ FROM eclipse-temurin:17-jre-alpine
 
 WORKDIR /app
 
-# Create unprivileged system user for security
-RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+# Create unprivileged system user with specific numeric UID/GID for Kubernetes compatibility
+RUN addgroup -g 10001 -S appgroup && adduser -u 10001 -S appuser -G appgroup
 
 # Copy built artifact from builder stage
 COPY --from=builder /build/target/*.jar app.jar
 
 # Adjust permissions
-RUN chown -R appuser:appgroup /app
+RUN chown -R 10001:10001 /app
 
-# Run as non-root user
-USER appuser
+# Run as non-root user (UID 10001)
+USER 10001:10001
 
 # Expose Spring Boot default port
 EXPOSE 8080
@@ -39,5 +39,7 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD wget -qO- http://localhost:8080/actuator/health || exit 1
 
-# Launch the application
-ENTRYPOINT ["java", "-Djava.security.egd=file:/dev/./urandom", "-jar", "app.jar"]
+# Launch the application with container memory awareness
+ENV JAVA_OPTS="-XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0"
+ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -Djava.security.egd=file:/dev/./urandom -jar app.jar"]
+

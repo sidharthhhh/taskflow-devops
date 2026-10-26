@@ -61,6 +61,20 @@
             <scope>runtime</scope>
         </dependency>
 
+        <!-- PostgreSQL JDBC Driver for Production, Compose, and Kubernetes Runtimes -->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
+        <!-- Micrometer Prometheus Registry for Actuator Metrics Scraping -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
         <!-- Spring Boot Starter Test (JUnit 5, Mockito, AssertJ, Spring Test) -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

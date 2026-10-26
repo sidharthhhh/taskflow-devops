@@ -1,14 +1,42 @@
-version: '3.8'
-
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: taskflow-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: taskflowdb
+      POSTGRES_USER: taskflow
+      POSTGRES_PASSWORD: taskflowpassword
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U taskflow -d taskflowdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
   app:
     build:
       context: ./app
       dockerfile: Dockerfile
     container_name: taskflow-app
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
     ports:
       - "8080:8080"
     environment:
       - SERVER_PORT=8080
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/taskflowdb
+      - SPRING_DATASOURCE_USERNAME=taskflow
+      - SPRING_DATASOURCE_PASSWORD=taskflowpassword
+      - SPRING_DATASOURCE_DRIVER_CLASS_NAME=org.postgresql.Driver
+      - SPRING_JPA_HIBERNATE_DDL_AUTO=update
+      - SPRING_H2_CONSOLE_ENABLED=false
 
+volumes:
+  postgres_data:
