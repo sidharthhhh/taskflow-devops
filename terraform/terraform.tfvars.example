@@ -1,0 +1,40 @@
+# =============================================================================
+# TaskFlow Terraform Configuration Variables (Example)
+# Rename this file to `terraform.tfvars` and customize before applying.
+# =============================================================================
+
+# AWS Region to deploy resources into
+aws_region = "us-east-1"
+
+# Project identification tags
+project_name = "taskflow"
+environment  = "prod"
+owner        = "DevOps-Team"
+
+# GitHub repository in 'owner/repo' format for keyless OIDC IAM role trust
+github_repo  = "sidharthhhh/taskflow-devops"
+
+# Network Configuration
+vpc_cidr             = "10.0.0.0/16"
+availability_zones   = ["us-east-1a", "us-east-1b"]
+public_subnet_cidrs  = ["10.0.1.0/24", "10.0.2.0/24"]
+private_subnet_cidrs = ["10.0.10.0/24", "10.0.20.0/24"]
+
+# EKS Cluster Configuration
+cluster_version      = "1.30"
+node_instance_types  = ["t3.medium"]
+node_desired_size    = 2
+node_min_size        = 2
+node_max_size        = 4
+
+# Restrict public EKS API access if desired (default open to 0.0.0.0/0)
+# cluster_endpoint_public_access_cidrs = ["203.0.113.50/32"]
+
+# Container Registry Configuration
+ecr_repository_name      = "taskflow-app"
+ecr_image_tag_mutability = "MUTABLE"
+
+# Cost Guardrail Budget Configuration
+enable_budget        = true
+monthly_budget_limit = "25.0"
+budget_alert_email   = "your-email@example.com"

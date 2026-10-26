@@ -1,44 +1,147 @@
-# Target build outputs
+# =============================================================================
+# TaskFlow DevOps - Git Ignore Policy
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# 1. Java & Maven Build Outputs
+# -----------------------------------------------------------------------------
 target/
 **/target/
+*.class
+*.jar
+*.war
+*.ear
+*.nar
+*.zip
+*.tar.gz
+*.rar
+hs_err_pid*
+replay_pid*
 
-# Environment files
+# Keep Maven Wrapper binaries
+!.mvn/wrapper/maven-wrapper.jar
+!**/src/main/**/target/
+!**/src/test/**/target/
+
+# -----------------------------------------------------------------------------
+# 2. Environment Variables & Secret Credentials
+# -----------------------------------------------------------------------------
 .env
 **/.env
 *.env
 !.env.example
 !**/.env.example
 
-# Maven Wrapper binaries
-!.mvn/wrapper/maven-wrapper.jar
-!**/src/main/**/target/
-!**/src/test/**/target/
+# Local credentials & certificates
+*.pem
+*.key
+*.pfx
+*.p12
+*.crt
+id_rsa*
+credentials
+secrets.local.*
 
-# IDE & Editor Settings
+# -----------------------------------------------------------------------------
+# 3. Terraform State, Artifacts & Cache
+# -----------------------------------------------------------------------------
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
+crash.log
+crash.*.log
+
+# Terraform Variables & Secrets (Keep templates)
+*.tfvars
+*.tfvars.json
+*.auto.tfvars
+*.auto.tfvars.json
+!*.tfvars.example
+
+# S3 Backend configuration file (Keep template)
+backend.hcl
+!backend.hcl.example
+
+# Override files
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# CLI Configuration
+.terraformrc
+terraform.rc
+
+# -----------------------------------------------------------------------------
+# 4. Kubernetes & Local Cluster Artifacts
+# -----------------------------------------------------------------------------
+.kube/
+kubeconfig
+*.kubeconfig
+*.k3d.yaml
+
+# -----------------------------------------------------------------------------
+# 5. Python Caches & Virtual Environments (Scripts & Load Testing)
+# -----------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.venv/
+venv/
+ENV/
+env/
+dist/
+build/
+*.egg-info/
+
+# -----------------------------------------------------------------------------
+# 6. IDEs & Editor Settings
+# -----------------------------------------------------------------------------
 .idea/
 *.iws
 *.iml
 *.ipr
 .vscode/
-.apt_generated
+*.code-workspace
+.apt_generated/
 .classpath
 .factorypath
 .project
-.settings
+.settings/
 .springBeans
-.sts4-cache
+.sts4-cache/
 /nbproject/private/
 /nbbuild/
-/dist/
 /nbattrs.xml
-/build/
+*.swp
+*.swo
+*~
 
-# Logs & Temporary files
+# -----------------------------------------------------------------------------
+# 7. Operating System Artifacts
+# -----------------------------------------------------------------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# Project Plan (Local Tracking)
+plan
+
+# -----------------------------------------------------------------------------
+# 8. Logs & Temporary Files
+# -----------------------------------------------------------------------------
 *.log
 *.tmp
 *.bak
-
-# OS generated files
-.DS_Store
-Thumbs.db
-plan

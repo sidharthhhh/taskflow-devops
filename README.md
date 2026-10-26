@@ -63,6 +63,19 @@ taskflow-devops/
 │       └── eks/                                 # AWS EKS production overlay
 │           ├── service-patch.yaml               # AWS Network Load Balancer (NLB) annotations
 │           └── kustomization.yaml
+├── terraform/
+│   ├── README.md                                # Complete Terraform infrastructure guide
+│   ├── bootstrap/                               # Remote state S3 bucket & DynamoDB lock table
+│   ├── modules/                                 # Reusable VPC, ECR, and EKS modules
+│   │   ├── vpc/                                 # Multi-AZ VPC, subnets, NAT Gateway, IGW
+│   │   ├── ecr/                                 # Container registry with lifecycle scanning
+│   │   └── eks/                                 # EKS Cluster, node group, IRSA, EBS CSI driver
+│   ├── {main,variables,outputs,versions}.tf     # Core infrastructure orchestration
+│   ├── github-oidc.tf                           # Keyless GitHub Actions CI/CD IAM role
+│   ├── secrets.tf                               # AWS Secrets Manager DB credentials
+│   ├── backup.tf                                # S3 automated backup bucket & lifecycle
+│   ├── budget.tf                                # AWS budget & cost guardrail alerts
+│   └── terraform.tfvars.example                 # Variables configuration template
 ├── docker-compose.yml                           # Local multi-container stack (App + PostgreSQL 16)
 ├── Dockerfile                                   # Root Dockerfile shortcut
 └── README.md

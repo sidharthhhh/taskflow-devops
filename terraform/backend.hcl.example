@@ -1,0 +1,14 @@
+# =============================================================================
+# Terraform S3 Remote Backend Configuration (Example)
+# 
+# Usage:
+#   1. Copy this file: cp backend.hcl.example backend.hcl
+#   2. Replace <YOUR_AWS_ACCOUNT_ID> with your 12-digit AWS Account ID
+#   3. Initialize:     terraform init -backend-config=backend.hcl
+# =============================================================================
+
+bucket         = "taskflow-prod-tfstate-<YOUR_AWS_ACCOUNT_ID>"
+key            = "taskflow/terraform.tfstate"
+region         = "us-east-1"
+dynamodb_table = "taskflow-prod-tflocks"
+encrypt        = true
