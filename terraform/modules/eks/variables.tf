@@ -6,7 +6,7 @@ variable "cluster_name" {
 variable "cluster_version" {
   description = "Kubernetes control plane version"
   type        = string
-  default     = "1.30"
+  default     = "1.31"
 }
 
 variable "vpc_id" {
@@ -33,7 +33,7 @@ variable "public_access_cidrs" {
 variable "node_instance_types" {
   description = "EC2 instance types for the EKS managed node group"
   type        = list(string)
-  default     = ["t3.medium"]
+  default     = ["t3.micro"]
 }
 
 variable "desired_size" {

@@ -4,12 +4,13 @@ metadata:
   name: taskflow-service
   namespace: taskflow
   annotations:
-    service.beta.kubernetes.io/aws-load-balancer-type: "external"
-    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"
     service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
 spec:
+  $patch: replace
   type: LoadBalancer
   ports:
     - name: http
       port: 80
       targetPort: 8080
+  selector:
+    app: taskflow-app

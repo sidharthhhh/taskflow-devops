@@ -5,6 +5,12 @@ namespace: taskflow
 
 resources:
   - ../../base
+  - gp3-storageclass.yaml
 
 patches:
   - path: service-patch.yaml
+
+images:
+  - name: taskflow-app
+    newName: sidharthhhh/taskflow-app
+    newTag: latest

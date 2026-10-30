@@ -38,10 +38,10 @@ output "cluster_certificate_authority_data" {
   value       = module.eks.cluster_certificate_authority_data
 }
 
-output "oidc_provider_arn" {
-  description = "ARN of the EKS OIDC identity provider for IRSA"
-  value       = module.eks.oidc_provider_arn
-}
+# output "oidc_provider_arn" {
+#   description = "ARN of the EKS OIDC identity provider for IRSA"
+#   value       = module.eks.oidc_provider_arn
+# }
 
 output "ecr_repository_url" {
   description = "URL of the Amazon ECR repository for taskflow-app"
@@ -53,10 +53,10 @@ output "ecr_repository_name" {
   value       = module.ecr.repository_name
 }
 
-output "github_actions_role_arn" {
-  description = "IAM Role ARN to configure in GitHub Actions for keyless deployment"
-  value       = aws_iam_role.github_actions.arn
-}
+# output "github_actions_role_arn" {
+#   description = "IAM Role ARN to configure in GitHub Actions for keyless deployment"
+#   value       = aws_iam_role.github_actions.arn
+# }
 
 output "backup_bucket_name" {
   description = "S3 bucket name used for PostgreSQL backups"

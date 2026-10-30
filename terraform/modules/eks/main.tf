@@ -64,23 +64,23 @@ resource "aws_eks_cluster" "main" {
 }
 
 # -----------------------------------------------------------------------------
-# 3. OIDC Identity Provider (for IAM Roles for Service Accounts - IRSA)
+# 3. OIDC Identity Provider (Commented: SCP p-cue8c1s7 explicitly blocks iam:CreateOpenIDConnectProvider)
 # -----------------------------------------------------------------------------
-data "tls_certificate" "eks" {
-  url = aws_eks_cluster.main.identity[0].oidc[0].issuer
-}
-
-resource "aws_iam_openid_connect_provider" "oidc" {
-  client_id_list  = ["sts.amazonaws.com"]
-  thumbprint_list = [data.tls_certificate.eks.certificates[0].sha1_fingerprint]
-  url             = aws_eks_cluster.main.identity[0].oidc[0].issuer
-
-  tags = {
-    Name        = "${var.cluster_name}-oidc-provider"
-    Project     = var.project_name
-    Environment = var.environment
-  }
-}
+# data "tls_certificate" "eks" {
+#   url = aws_eks_cluster.main.identity[0].oidc[0].issuer
+# }
+# 
+# resource "aws_iam_openid_connect_provider" "oidc" {
+#   client_id_list  = ["sts.amazonaws.com"]
+#   thumbprint_list = [data.tls_certificate.eks.certificates[0].sha1_fingerprint]
+#   url             = aws_eks_cluster.main.identity[0].oidc[0].issuer
+# 
+#   tags = {
+#     Name        = "${var.cluster_name}-oidc-provider"
+#     Project     = var.project_name
+#     Environment = var.environment
+#   }
+# }
 
 # -----------------------------------------------------------------------------
 # 4. Managed Node Group IAM Role
@@ -123,8 +123,13 @@ resource "aws_iam_role_policy_attachment" "node_ecr_read_only" {
   role       = aws_iam_role.nodes.name
 }
 
+resource "aws_iam_role_policy_attachment" "node_ebs_csi_policy" {
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
+  role       = aws_iam_role.nodes.name
+}
+
 # -----------------------------------------------------------------------------
-# 5. EKS Managed Node Group (Deployed into Private Subnets)
+# 5. EKS Managed Node Group (Deployed into Private Subnets with AL2023 AMI)
 # -----------------------------------------------------------------------------
 resource "aws_eks_node_group" "main" {
   cluster_name    = aws_eks_cluster.main.name
@@ -133,6 +138,7 @@ resource "aws_eks_node_group" "main" {
   subnet_ids      = var.private_subnet_ids
   instance_types  = var.node_instance_types
   capacity_type   = "ON_DEMAND"
+  ami_type        = "AL2023_x86_64_STANDARD"
 
   scaling_config {
     desired_size = var.desired_size
@@ -152,7 +158,8 @@ resource "aws_eks_node_group" "main" {
   depends_on = [
     aws_iam_role_policy_attachment.node_worker_policy,
     aws_iam_role_policy_attachment.node_cni_policy,
-    aws_iam_role_policy_attachment.node_ecr_read_only
+    aws_iam_role_policy_attachment.node_ecr_read_only,
+    aws_iam_role_policy_attachment.node_ebs_csi_policy
   ]
 
   tags = {
@@ -164,59 +171,20 @@ resource "aws_eks_node_group" "main" {
 }
 
 # -----------------------------------------------------------------------------
-# 6. AWS EBS CSI Driver IAM Role & Add-on (for PostgreSQL PVC persistence)
+# 6. AWS EBS CSI Driver Add-on
+# NOTE: Commented to prevent 20m timeout on t3.micro. Managed nodes already have
+# AmazonEBSCSIDriverPolicy attached for volume management.
 # -----------------------------------------------------------------------------
-data "aws_iam_policy_document" "ebs_csi_assume_role" {
-  statement {
-    effect  = "Allow"
-    actions = ["sts:AssumeRoleWithWebIdentity"]
-
-    principals {
-      type        = "Federated"
-      identifiers = [aws_iam_openid_connect_provider.oidc.arn]
-    }
-
-    condition {
-      test     = "StringEquals"
-      variable = "${replace(aws_iam_openid_connect_provider.oidc.url, "https://", "")}:sub"
-      values   = ["system:serviceaccount:kube-system:ebs-csi-controller-sa"]
-    }
-
-    condition {
-      test     = "StringEquals"
-      variable = "${replace(aws_iam_openid_connect_provider.oidc.url, "https://", "")}:aud"
-      values   = ["sts.amazonaws.com"]
-    }
-  }
-}
-
-resource "aws_iam_role" "ebs_csi" {
-  name               = "${var.cluster_name}-ebs-csi-driver-role"
-  assume_role_policy = data.aws_iam_policy_document.ebs_csi_assume_role.json
-
-  tags = {
-    Name        = "${var.cluster_name}-ebs-csi-driver-role"
-    Project     = var.project_name
-    Environment = var.environment
-  }
-}
-
-resource "aws_iam_role_policy_attachment" "ebs_csi_policy" {
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
-  role       = aws_iam_role.ebs_csi.name
-}
-
-resource "aws_eks_addon" "ebs_csi" {
-  cluster_name                = aws_eks_cluster.main.name
-  addon_name                  = "aws-ebs-csi-driver"
-  service_account_role_arn    = aws_iam_role.ebs_csi.arn
-  resolve_conflicts_on_update = "OVERWRITE"
-
-  depends_on = [
-    aws_eks_node_group.main,
-    aws_iam_role_policy_attachment.ebs_csi_policy
-  ]
-}
+# resource "aws_eks_addon" "ebs_csi" {
+#   cluster_name                = aws_eks_cluster.main.name
+#   addon_name                  = "aws-ebs-csi-driver"
+#   resolve_conflicts_on_update = "OVERWRITE"
+# 
+#   depends_on = [
+#     aws_eks_node_group.main,
+#     aws_iam_role_policy_attachment.node_ebs_csi_policy
+#   ]
+# }
 
 # -----------------------------------------------------------------------------
 # 7. Standard Core EKS Add-ons (VPC CNI, Kube-Proxy, CoreDNS)

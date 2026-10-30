@@ -18,22 +18,22 @@ output "cluster_certificate_authority_data" {
   value       = aws_eks_cluster.main.certificate_authority[0].data
 }
 
-output "oidc_provider_arn" {
-  description = "ARN of the EKS OIDC identity provider for IRSA"
-  value       = aws_iam_openid_connect_provider.oidc.arn
-}
+# output "oidc_provider_arn" {
+#   description = "ARN of the EKS OIDC identity provider for IRSA"
+#   value       = aws_iam_openid_connect_provider.oidc.arn
+# }
 
-output "oidc_provider_url" {
-  description = "URL of the EKS OIDC identity provider"
-  value       = aws_iam_openid_connect_provider.oidc.url
-}
+# output "oidc_provider_url" {
+#   description = "URL of the EKS OIDC identity provider"
+#   value       = aws_iam_openid_connect_provider.oidc.url
+# }
 
 output "node_group_role_arn" {
   description = "IAM role ARN used by the EKS managed node group"
   value       = aws_iam_role.nodes.arn
 }
 
-output "ebs_csi_role_arn" {
-  description = "IAM role ARN used by the AWS EBS CSI driver"
-  value       = aws_iam_role.ebs_csi.arn
-}
+# output "ebs_csi_role_arn" {
+#   description = "IAM role ARN used by the AWS EBS CSI driver"
+#   value       = aws_iam_role.ebs_csi.arn
+# }

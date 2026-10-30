@@ -97,6 +97,7 @@ flowchart TD
 ```text
 k8s/
 ├── README.md                            # This comprehensive guide
+├── aws.md                               # AWS Sydney (ap-southeast-2) EKS & ECS Deployment Guide
 ├── base/                                # Reusable, environment-agnostic base manifests
 │   ├── namespace.yaml                   # Dedicated 'taskflow' namespace
 │   ├── configmap.yaml                   # Environment variables (port, DB URL, actuator)
@@ -113,6 +114,7 @@ k8s/
     │   ├── service-patch.yaml           # Patches app-service to NodePort 30080
     │   └── kustomization.yaml           # Merges base with local patches
     └── eks/                             # Production AWS EKS overlay
+        ├── gp3-storageclass.yaml        # AWS EBS CSI dynamic GP3 storage class
         ├── service-patch.yaml           # Configures AWS Network Load Balancer (NLB) annotations
         └── kustomization.yaml           # Merges base with EKS patches
 ```
