@@ -2,12 +2,12 @@ name: CI - Golang Notification Service
 
 on:
   push:
-    branches: [sidharth/feature, main, master]
+    branches: [microservice, sidharth/feature, main, master]
     paths:
       - 'services/notification-service/**'
       - '.github/workflows/ci-go-notification.yml'
   pull_request:
-    branches: [sidharth/feature, main, master]
+    branches: [microservice, sidharth/feature, main, master]
     paths:
       - 'services/notification-service/**'
       - '.github/workflows/ci-go-notification.yml'

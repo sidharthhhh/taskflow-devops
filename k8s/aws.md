@@ -3,7 +3,7 @@
 **AWS Account ID:** `666952271651`  
 **EKS Console URL:** [AWS EKS Console (Sydney)](https://666952271651-ardh7d5x.ap-southeast-2.console.aws.amazon.com/eks/clusters?region=ap-southeast-2)  
 **Repository:** [github.com/sidharthhhh/taskflow-devops](https://github.com/sidharthhhh/taskflow-devops)  
-**Active Working Branch:** `sidharth/feature`  
+**Active Working Branch:** `microservice`  
 
 ---
 
@@ -53,7 +53,7 @@ This project implements an enterprise-grade cloud-native infrastructure for the 
               | Image Pull                                              | Keyless OIDC (AssumeRole)
      +--------+-----------+                                    +--------+------------------+
      | Docker Hub / ECR   |                                    | GitHub Actions CI/CD     |
-     | sidharthhhh/       |                                    | Branch: sidharth/feature |
+     | sidharthhhh/       |                                    | Branch: microservice     |
      | taskflow-app       |                                    +--------------------------+
      +--------------------+
 ```
@@ -69,7 +69,7 @@ This project implements an enterprise-grade cloud-native infrastructure for the 
 | **Fast-Track Compute**| Amazon ECS Fargate (Serverless container runtime, no cluster fee) |
 | **Storage Backend** | AWS EBS CSI Driver (`gp3` dynamically provisioned volumes) |
 | **Image Registry** | Docker Hub (`<username>/taskflow-app`) + Amazon ECR |
-| **Git Repository** | `https://github.com/sidharthhhh/taskflow-devops` (`sidharth/feature`) |
+| **Git Repository** | `https://github.com/sidharthhhh/taskflow-devops` (`microservice`) |
 
 ---
 
@@ -594,7 +594,7 @@ aws ecs create-service `
 
 ## 8. GitHub Actions CI/CD Pipeline Integration
 
-The repository is on branch: **`sidharth/feature`**  
+The repository is on branch: **`microservice`**  
 URL: `https://github.com/sidharthhhh/taskflow-devops`
 
 ### 8.1 Configure GitHub Repository Secrets & Variables
@@ -618,24 +618,22 @@ Navigate to **GitHub Repository** -> **Settings** -> **Secrets and variables** -
 
 ---
 
-### 8.2 Push Changes on Branch `sidharth/feature`
+### 8.2 Push Changes on Branch `microservice`
 
 Commit and push from your laptop:
 
 ```powershell
 git status
 git add .
-git commit -m "docs(k8s): add complete AWS deployment guide for ap-southeast-2"
-git push origin sidharth/feature
+git commit -m "feat(microservices): configure PostgreSQL auth, PV/PVC storage & GitHub Actions"
+git push origin microservice
 ```
 
-The GitHub Actions pipeline (`.github/workflows/ci-cd.yml`) will automatically trigger:
-1. Maven verify & unit/integration tests
-2. Terraform formatting & validation
-3. Kustomize validation
-4. Docker build & Trivy security scanning
-5. Smoke test container execution
-6. Keyless OIDC AWS authentication and deployment
+The modular GitHub Actions workflows in `.github/workflows/` (`ci-task-service.yml`, `ci-node-services.yml`, `ci-go-notification.yml`, `ci-rust-audit.yml`, `ci-frontend.yml`, `ci-infra-k8s.yml`) will automatically trigger based on modified paths to run:
+1. Language-specific tests (`mvn verify`, Node checks, `go test`, `cargo test`, `tsc` + `next build`)
+2. Terraform formatting & validation + Docker Compose & Kustomize (`local` / `eks`) checks
+3. Multi-stage Docker builds, Trivy CVE security scanning, and `/health` smoke tests
+4. Controlled Docker Hub image pushes & EKS deployment via `cd-deploy.yml` (when `DEPLOY_ENABLED=true` or via `workflow_dispatch`)
 
 ---
 
@@ -695,7 +693,7 @@ This guide completes the milestones defined in [`plan/TaskFlow-DevOps-LLM-Implem
 
 | Phase in Master Plan | Implementation Status & Corresponding File |
 | :--- | :--- |
-| **Phase 0: Discovery & Contract** | ✅ Verified repo structure, branch `sidharth/feature`, and AWS credentials. |
+| **Phase 0: Discovery & Contract** | ✅ Verified repo structure, branch `microservice`, and AWS credentials. |
 | **Phase 1: Spring Boot API** | ✅ REST endpoints, Actuator probes, unit & integration tests (`services/task-service/`). |
 | **Phase 2: Containerization** | ✅ Multi-stage non-root `Dockerfile` across all 6 backend services + Next.js Frontend + Compose. |
 | **Phase 3: Kubernetes Manifests** | ✅ Kustomize `base/`, `overlays/local`, and `overlays/eks` manifests (`k8s/`). |

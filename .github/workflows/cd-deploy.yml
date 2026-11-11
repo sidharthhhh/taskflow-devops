@@ -2,7 +2,7 @@ name: CD - Build, Push Docker Hub & Deploy to EKS
 
 on:
   push:
-    branches: [main]
+    branches: [microservice, main]
     paths-ignore:
       - '**.md'
       - '.gitignore'
@@ -121,8 +121,16 @@ jobs:
       - name: Update Kubeconfig for EKS
         run: aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.EKS_CLUSTER_NAME }}
 
-      - name: Set up Kubectl & Kustomize
+      - name: Set up Kubectl
         uses: azure/setup-kubectl@v4
+
+      - name: Install Kustomize CLI
+        run: |
+          if ! command -v kustomize >/dev/null 2>&1; then
+            curl -sSfL "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.4.3/kustomize_v5.4.3_linux_amd64.tar.gz" | tar -xz -C /tmp
+            sudo mv /tmp/kustomize /usr/local/bin/kustomize
+          fi
+          kustomize version
 
       - name: Inject Image Tags & Apply Kustomize Overlay
         run: |
@@ -141,10 +149,12 @@ jobs:
 
       - name: Verify Rollouts
         run: |
+          kubectl rollout status statefulset/postgres -n taskflow --timeout=180s || true
+          kubectl rollout status deployment/redis -n taskflow --timeout=120s || true
           for deploy in taskflow-app auth-service analytics-service scheduler-service notification-service audit-service taskflow-frontend; do
             kubectl rollout status "deployment/${deploy}" -n taskflow --timeout=180s
           done
-          kubectl get pods,svc -n taskflow -o wide
+          kubectl get pods,svc,pv,pvc -n taskflow -o wide
 
       - name: Rollback Task & Frontend on Failure
         if: failure()

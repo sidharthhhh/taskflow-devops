@@ -1,6 +1,6 @@
 # 🚀 TaskFlow CI/CD Pipelines (GitHub Actions)
 
-This directory contains **7 modular, path-filtered CI/CD workflows** tailored for the **`sidharth/feature`** and **`main`** branches, supporting polyglot microservices (Java, Node.js, Golang, Rust, Next.js), Docker Hub / Amazon ECR, and Amazon EKS (`ap-southeast-2`).
+This directory contains **7 modular, path-filtered CI/CD workflows** tailored for the **`microservice`**, **`sidharth/feature`**, **`main`**, and **`master`** branches, supporting polyglot microservices (Java, Node.js, Golang, Rust, Next.js), Docker Hub / Amazon ECR, and Amazon EKS (`ap-southeast-2`).
 
 ---
 
@@ -16,7 +16,7 @@ Each microservice and infrastructure layer has its own isolated CI workflow usin
 | [`ci-rust-audit.yml`](workflows/ci-rust-audit.yml) | `services/audit-service/**` | `cargo fmt --check`, `cargo clippy`, `cargo test`, musl Alpine Docker build, Trivy scan, `/health` smoke test |
 | [`ci-frontend.yml`](workflows/ci-frontend.yml) | `frontend/**` | `tsc --noEmit`, `npm run build`, Next.js standalone Docker build, Trivy scan, `/api/health` smoke test |
 | [`ci-infra-k8s.yml`](workflows/ci-infra-k8s.yml) | `terraform/**`, `k8s/**`, `docker-compose.yml` | `terraform fmt -check`, `terraform validate`, `docker compose config -q`, `kubectl kustomize` (`local` & `eks`) |
-| [`cd-deploy.yml`](workflows/cd-deploy.yml) | `main` (when `DEPLOY_ENABLED=true`) or `workflow_dispatch` | Matrix build & push all 7 images to Docker Hub (`linux/amd64`), inject tags into `k8s/overlays/eks`, deploy to EKS with auto-rollback |
+| [`cd-deploy.yml`](workflows/cd-deploy.yml) | `microservice` / `main` (when `DEPLOY_ENABLED=true`) or `workflow_dispatch` | Matrix build & push all 7 images to Docker Hub (`linux/amd64`), install `kustomize`, inject tags into `k8s/overlays/eks`, deploy to EKS & verify `postgres` + microservice rollouts |
 
 ---
 
@@ -44,6 +44,6 @@ Navigate to **GitHub Repository > Settings > Secrets and variables > Actions**:
 
 ## 🛡️ Built-in Safety & Rollback
 
-1. **Branch & Path Isolation**: Pushes to `sidharth/feature` run fast, isolated CI validation and Trivy security scans without touching live AWS infrastructure.
-2. **Gated CD Deployment**: Cloud deployment in `cd-deploy.yml` runs only on explicit `workflow_dispatch` or on `main` when `DEPLOY_ENABLED == 'true'`.
+1. **Branch & Path Isolation**: Pushes and pull requests targeting `microservice` or `sidharth/feature` run fast, isolated CI validation and Trivy security scans without touching live AWS infrastructure unless `DEPLOY_ENABLED == 'true'`.
+2. **Gated CD Deployment**: Cloud deployment in `cd-deploy.yml` runs only on explicit `workflow_dispatch` or on `microservice`/`main` when `DEPLOY_ENABLED == 'true'`.
 3. **Automated Rollback**: If any deployment rollout times out (`kubectl rollout status --timeout=180s`), the pipeline automatically executes `kubectl rollout undo` for `taskflow-app` and `taskflow-frontend`.
