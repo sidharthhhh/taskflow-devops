@@ -1,8 +1,14 @@
+networks:
+  taskflow-net:
+    driver: bridge
+
 services:
   postgres:
     image: postgres:16-alpine
     container_name: taskflow-postgres
     restart: unless-stopped
+    networks:
+      - taskflow-net
     environment:
       POSTGRES_DB: taskflowdb
       POSTGRES_USER: taskflow
@@ -17,13 +23,40 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
 
-  app:
-    build:
-      context: ./app
-      dockerfile: Dockerfile
-    container_name: taskflow-app
+  redis:
+    image: redis:7-alpine
+    container_name: taskflow-redis
     restart: unless-stopped
+    networks:
+      - taskflow-net
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 160M
+
+  task-service:
+    build:
+      context: ./services/task-service
+      dockerfile: Dockerfile
+    container_name: taskflow-task-service
+    restart: unless-stopped
+    networks:
+      - taskflow-net
     depends_on:
       postgres:
         condition: service_healthy
@@ -37,6 +70,196 @@ services:
       - SPRING_DATASOURCE_DRIVER_CLASS_NAME=org.postgresql.Driver
       - SPRING_JPA_HIBERNATE_DDL_AUTO=update
       - SPRING_H2_CONSOLE_ENABLED=false
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 25s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  auth-service:
+    build:
+      context: ./services/auth-service
+      dockerfile: Dockerfile
+    container_name: taskflow-auth
+    restart: unless-stopped
+    networks:
+      - taskflow-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "3001:3001"
+    environment:
+      - PORT=3001
+      - DATABASE_URL=postgresql://taskflow:taskflowpassword@postgres:5432/authdb
+      - PGADMIN_DB=taskflowdb
+      - JWT_SECRET=taskflow-local-dev-jwt-secret
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3001/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+
+  analytics-service:
+    build:
+      context: ./services/analytics-service
+      dockerfile: Dockerfile
+    container_name: taskflow-analytics
+    restart: unless-stopped
+    networks:
+      - taskflow-net
+    depends_on:
+      redis:
+        condition: service_healthy
+      task-service:
+        condition: service_healthy
+    ports:
+      - "3002:3002"
+    environment:
+      - PORT=3002
+      - REDIS_URL=redis://redis:6379
+      - TASK_SERVICE_URL=http://task-service:8080
+      - CACHE_TTL_SEC=10
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3002/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+
+  notification-service:
+    build:
+      context: ./services/notification-service
+      dockerfile: Dockerfile
+    container_name: taskflow-notification
+    restart: unless-stopped
+    networks:
+      - taskflow-net
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      - "8081:8081"
+    environment:
+      - PORT=8081
+      - REDIS_URL=redis://redis:6379
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8081/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+
+  audit-service:
+    build:
+      context: ./services/audit-service
+      dockerfile: Dockerfile
+    container_name: taskflow-audit
+    restart: unless-stopped
+    networks:
+      - taskflow-net
+    ports:
+      - "8082:8082"
+    volumes:
+      - audit_data:/data
+    environment:
+      - PORT=8082
+      - AUDIT_LOG_PATH=/data/audit.jsonl
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8082/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+
+  scheduler-service:
+    build:
+      context: ./services/scheduler-service
+      dockerfile: Dockerfile
+    container_name: taskflow-scheduler
+    restart: unless-stopped
+    networks:
+      - taskflow-net
+    depends_on:
+      redis:
+        condition: service_healthy
+      task-service:
+        condition: service_healthy
+    ports:
+      - "3003:3003"
+    environment:
+      - PORT=3003
+      - REDIS_URL=redis://redis:6379
+      - TASK_SERVICE_URL=http://task-service:8080
+      - NOTIFICATION_SERVICE_URL=http://notification-service:8081
+      - AUDIT_SERVICE_URL=http://audit-service:8082
+      - CRON_INTERVAL_MS=30000
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3003/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: taskflow-frontend
+    restart: unless-stopped
+    networks:
+      - taskflow-net
+    depends_on:
+      task-service:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - TASK_SERVICE_URL=http://task-service:8080
+      - AUTH_SERVICE_URL=http://auth-service:3001
+      - ANALYTICS_SERVICE_URL=http://analytics-service:3002
+      - SCHEDULER_SERVICE_URL=http://scheduler-service:3003
+      - NOTIFICATION_SERVICE_URL=http://notification-service:8081
+      - AUDIT_SERVICE_URL=http://audit-service:8082
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
 
 volumes:
   postgres_data:
+  redis_data:
+  audit_data:

@@ -43,14 +43,14 @@ output "cluster_certificate_authority_data" {
 #   value       = module.eks.oidc_provider_arn
 # }
 
-output "ecr_repository_url" {
-  description = "URL of the Amazon ECR repository for taskflow-app"
-  value       = module.ecr.repository_url
+output "ecr_repository_urls" {
+  description = "Map of Amazon ECR repository URLs for all TaskFlow microservices and frontend"
+  value       = { for k, repo in module.ecr : k => repo.repository_url }
 }
 
-output "ecr_repository_name" {
-  description = "Name of the Amazon ECR repository"
-  value       = module.ecr.repository_name
+output "ecr_repository_names" {
+  description = "List of Amazon ECR repository names"
+  value       = keys(module.ecr)
 }
 
 # output "github_actions_role_arn" {

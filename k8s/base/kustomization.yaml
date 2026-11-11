@@ -8,8 +8,12 @@ resources:
   - configmap.yaml
   - secret.yaml
   - postgres-service.yaml
+  - postgres-pvc.yaml
   - postgres-statefulset.yaml
+  - redis.yaml
   - app-deployment.yaml
   - app-service.yaml
+  - microservices.yaml
+  - frontend.yaml
   - hpa.yaml
   - pdb.yaml

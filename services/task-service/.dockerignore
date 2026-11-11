@@ -1,8 +1,14 @@
 target/
 **/.git
 **/.gitignore
+**/.dockerignore
 **/.vscode
 **/.idea
+.DS_Store
+Thumbs.db
 *.log
 *.tmp
+*.md
 .env
+*.env
+Dockerfile*

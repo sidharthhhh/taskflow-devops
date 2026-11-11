@@ -1,9 +1,9 @@
 # =============================================================================
-# TaskFlow DevOps - Git Ignore Policy
+# TaskFlow DevOps - Git Ignore Policy (Polyglot Microservices Edition)
 # =============================================================================
 
 # -----------------------------------------------------------------------------
-# 1. Java & Maven Build Outputs
+# 1. Java & Maven Build Outputs (services/task-service)
 # -----------------------------------------------------------------------------
 target/
 **/target/
@@ -24,7 +24,43 @@ replay_pid*
 !**/src/test/**/target/
 
 # -----------------------------------------------------------------------------
-# 2. Environment Variables & Secret Credentials
+# 2. Node.js & Next.js (frontend & services/{auth,analytics,scheduler}-service)
+# -----------------------------------------------------------------------------
+node_modules/
+**/node_modules/
+.next/
+**/.next/
+out/
+**/out/
+.vercel/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+*.tsbuildinfo
+next-env.d.ts
+
+# -----------------------------------------------------------------------------
+# 3. Golang Build & Test Outputs (services/notification-service)
+# -----------------------------------------------------------------------------
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+services/notification-service/notification-service
+
+# -----------------------------------------------------------------------------
+# 4. Rust & Audit Volume Data (services/audit-service)
+# -----------------------------------------------------------------------------
+**/*.rs.bk
+**/data/*.jsonl
+audit.jsonl
+
+# -----------------------------------------------------------------------------
+# 5. Environment Variables & Secret Credentials
 # -----------------------------------------------------------------------------
 .env
 **/.env
@@ -43,7 +79,7 @@ credentials
 secrets.local.*
 
 # -----------------------------------------------------------------------------
-# 3. Terraform State, Artifacts & Cache
+# 6. Terraform State, Artifacts & Cache
 # -----------------------------------------------------------------------------
 **/.terraform/
 *.tfstate
@@ -75,20 +111,20 @@ override.tf.json
 terraform.rc
 
 # -----------------------------------------------------------------------------
-# 4. Kubernetes & Local Cluster Artifacts
+# 7. Kubernetes, Docker & Security Scan Artifacts
 # -----------------------------------------------------------------------------
 .kube/
 kubeconfig
 *.kubeconfig
 *.k3d.yaml
+*.sarif
 
 # -----------------------------------------------------------------------------
-# 5. Python Caches & Virtual Environments (Scripts & Load Testing)
+# 8. Python Caches & Virtual Environments (Scripts & Load Testing)
 # -----------------------------------------------------------------------------
 __pycache__/
 *.py[cod]
 *$py.class
-*.so
 .pytest_cache/
 .coverage
 htmlcov/
@@ -102,7 +138,7 @@ build/
 *.egg-info/
 
 # -----------------------------------------------------------------------------
-# 6. IDEs & Editor Settings
+# 9. IDEs & Editor Settings
 # -----------------------------------------------------------------------------
 .idea/
 *.iws
@@ -125,7 +161,7 @@ build/
 *~
 
 # -----------------------------------------------------------------------------
-# 7. Operating System Artifacts
+# 10. Operating System Artifacts
 # -----------------------------------------------------------------------------
 .DS_Store
 .DS_Store?
@@ -140,7 +176,7 @@ desktop.ini
 plan
 
 # -----------------------------------------------------------------------------
-# 8. Logs & Temporary Files
+# 11. Logs & Temporary Files
 # -----------------------------------------------------------------------------
 *.log
 *.tmp

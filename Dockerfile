@@ -6,11 +6,11 @@ FROM maven:3.9-eclipse-temurin-17-alpine AS builder
 WORKDIR /build
 
 # Copy Maven POM and pre-fetch dependencies for layer caching
-COPY app/pom.xml ./pom.xml
+COPY services/task-service/pom.xml ./pom.xml
 RUN mvn dependency:resolve -B
 
 # Copy source code and package executable JAR (skip tests during container build)
-COPY app/src ./src
+COPY services/task-service/src ./src
 RUN mvn clean package -DskipTests
 
 # ==========================================
@@ -41,5 +41,5 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
 
 # Launch the application with container memory awareness
 ENV JAVA_OPTS="-XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0"
-ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -Djava.security.egd=file:/dev/./urandom -jar app.jar"]
+ENTRYPOINT ["sh", "-c", "exec java $JAVA_OPTS -Djava.security.egd=file:/dev/./urandom -jar app.jar"]
 

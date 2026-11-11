@@ -202,21 +202,24 @@ cd c:\Users\Sidharth\Desktop\taskflow-devops
 # Set your Docker Hub username variable
 $DOCKER_USER="<YOUR_DOCKERHUB_USERNAME>"
 
-# Build the production multi-stage container
-# Target linux/amd64 architecture to guarantee compatibility with AWS EC2/EKS nodes
-docker build --platform linux/amd64 `
-  -t ${DOCKER_USER}/taskflow-app:latest `
-  -t ${DOCKER_USER}/taskflow-app:v1.0.0 `
-  -f app/Dockerfile ./app
+# Build all polyglot microservice containers (linux/amd64 for AWS EC2/EKS nodes)
+docker build --platform linux/amd64 -t ${DOCKER_USER}/taskflow-app:latest -f services/task-service/Dockerfile ./services/task-service
+docker build --platform linux/amd64 -t ${DOCKER_USER}/taskflow-auth-service:latest -f services/auth-service/Dockerfile ./services/auth-service
+docker build --platform linux/amd64 -t ${DOCKER_USER}/taskflow-analytics-service:latest -f services/analytics-service/Dockerfile ./services/analytics-service
+docker build --platform linux/amd64 -t ${DOCKER_USER}/taskflow-scheduler-service:latest -f services/scheduler-service/Dockerfile ./services/scheduler-service
+docker build --platform linux/amd64 -t ${DOCKER_USER}/taskflow-notification-service:latest -f services/notification-service/Dockerfile ./services/notification-service
+docker build --platform linux/amd64 -t ${DOCKER_USER}/taskflow-audit-service:latest -f services/audit-service/Dockerfile ./services/audit-service
+docker build --platform linux/amd64 -t ${DOCKER_USER}/taskflow-frontend:latest -f frontend/Dockerfile ./frontend
 ```
 
 ---
 
-### 4.3 Push the Image to Docker Hub
+### 4.3 Push the Images to Docker Hub
 
 ```powershell
-docker push ${DOCKER_USER}/taskflow-app:latest
-docker push ${DOCKER_USER}/taskflow-app:v1.0.0
+foreach ($img in @("taskflow-app","taskflow-auth-service","taskflow-analytics-service","taskflow-scheduler-service","taskflow-notification-service","taskflow-audit-service","taskflow-frontend")) {
+  docker push "${DOCKER_USER}/${img}:latest"
+}
 ```
 
 > [!TIP]
@@ -349,11 +352,17 @@ kubectl get nodes -o wide
 
 ---
 
-### 6.3 Deploy AWS EBS GP3 StorageClass
+### 6.3 AWS EBS GP3 StorageClass & Database PVC
 
-The PostgreSQL database uses a persistent volume claim (`PVC`). Apply the standard AWS `gp3` storage class:
+The PostgreSQL StatefulSet (`taskflowdb` + `authdb`) uses a `PersistentVolumeClaim` (`postgres-pvc`), and `k8s/overlays/eks/postgres-pvc-patch.yaml` binds it to `storageClassName: gp3` via [`k8s/overlays/eks/gp3-storageclass.yaml`](gp3-storageclass.yaml).
 
-Create `k8s/overlays/eks/gp3-storageclass.yaml`:
+> [!IMPORTANT]
+> Ensure the **Amazon EBS CSI Driver** add-on is active on your EKS cluster so AWS dynamically provisions the `gp3` EBS `PersistentVolume` when `postgres-pvc` binds:
+> ```powershell
+> aws eks create-addon --cluster-name taskflow-prod-cluster --addon-name aws-ebs-csi-driver --region ap-southeast-2
+> ```
+
+[`k8s/overlays/eks/gp3-storageclass.yaml`](gp3-storageclass.yaml) is already included automatically when running `kubectl apply -k k8s/overlays/eks`:
 
 ```yaml
 apiVersion: storage.k8s.io/v1
@@ -369,16 +378,11 @@ parameters:
   fsType: ext4
 ```
 
-Apply it:
-```powershell
-kubectl apply -f k8s/overlays/eks/gp3-storageclass.yaml
-```
-
 ---
 
-### 6.4 Deploy TaskFlow Using Docker Hub Image
+### 6.4 Deploy TaskFlow Stack Using Kustomize & Docker Hub Images
 
-Update `k8s/overlays/eks/kustomization.yaml` to deploy your Docker Hub image:
+`k8s/overlays/eks/kustomization.yaml` maps all 7 container images to Docker Hub (`sidharthhhh/*`) and exposes `frontend-service` via an internet-facing AWS LoadBalancer (`:80 -> :3000`):
 
 ```yaml
 apiVersion: kustomize.config.k8s.io/v1beta1
@@ -391,18 +395,40 @@ resources:
   - gp3-storageclass.yaml
 
 patches:
-  - path: service-patch.yaml
+  - path: postgres-pvc-patch.yaml
+  - path: frontend-service-patch.yaml
 
 images:
   - name: taskflow-app
-    newName: <YOUR_DOCKERHUB_USERNAME>/taskflow-app
+    newName: sidharthhhh/taskflow-app
+    newTag: latest
+  - name: taskflow-auth-service
+    newName: sidharthhhh/taskflow-auth-service
+    newTag: latest
+  - name: taskflow-analytics-service
+    newName: sidharthhhh/taskflow-analytics-service
+    newTag: latest
+  - name: taskflow-scheduler-service
+    newName: sidharthhhh/taskflow-scheduler-service
+    newTag: latest
+  - name: taskflow-notification-service
+    newName: sidharthhhh/taskflow-notification-service
+    newTag: latest
+  - name: taskflow-audit-service
+    newName: sidharthhhh/taskflow-audit-service
+    newTag: latest
+  - name: taskflow-frontend
+    newName: sidharthhhh/taskflow-frontend
     newTag: latest
 ```
 
-Deploy the entire stack to EKS:
+Deploy the entire 9-workload stack to EKS:
 
 ```powershell
 cd c:\Users\Sidharth\Desktop\taskflow-devops\k8s\overlays\eks
+
+# Preview rendered manifests before applying (optional)
+kubectl kustomize .
 
 # Apply manifests via Kustomize
 kubectl apply -k .
@@ -410,25 +436,26 @@ kubectl apply -k .
 
 ---
 
-### 6.5 Verify Deployment & Retrieve AWS NLB URL
+### 6.5 Verify Deployment & Retrieve Public Frontend LoadBalancer URL
 
 Monitor the rollout:
 
 ```powershell
 # Check rollout progress
 kubectl rollout status deployment/taskflow-app -n taskflow --timeout=180s
+kubectl rollout status deployment/taskflow-frontend -n taskflow --timeout=180s
 
 # Inspect all resources in namespace
 kubectl get all -n taskflow
 
-# Retrieve the AWS Network Load Balancer (NLB) external DNS hostname
-kubectl get svc taskflow-service -n taskflow -o wide
+# Retrieve the AWS LoadBalancer external DNS hostname for Next.js UI & BFF
+kubectl get svc frontend-service -n taskflow -o wide
 ```
 
 Extract the exact public URL:
 ```powershell
-$NLB_HOST = (kubectl get svc taskflow-service -n taskflow -o jsonpath="{.status.loadBalancer.ingress[0].hostname}")
-echo "Your live TaskFlow URL: http://${NLB_HOST}"
+$ELB_HOST = (kubectl get svc frontend-service -n taskflow -o jsonpath="{.status.loadBalancer.ingress[0].hostname}")
+echo "Your live TaskFlow UI URL: http://${ELB_HOST}"
 ```
 
 ---
@@ -669,12 +696,12 @@ This guide completes the milestones defined in [`plan/TaskFlow-DevOps-LLM-Implem
 | Phase in Master Plan | Implementation Status & Corresponding File |
 | :--- | :--- |
 | **Phase 0: Discovery & Contract** | ✅ Verified repo structure, branch `sidharth/feature`, and AWS credentials. |
-| **Phase 1: Spring Boot API** | ✅ REST endpoints, Actuator probes, unit & integration tests (`app/`). |
-| **Phase 2: Containerization** | ✅ Multi-stage non-root `Dockerfile`, Docker Compose environment. |
+| **Phase 1: Spring Boot API** | ✅ REST endpoints, Actuator probes, unit & integration tests (`services/task-service/`). |
+| **Phase 2: Containerization** | ✅ Multi-stage non-root `Dockerfile` across all 6 backend services + Next.js Frontend + Compose. |
 | **Phase 3: Kubernetes Manifests** | ✅ Kustomize `base/`, `overlays/local`, and `overlays/eks` manifests (`k8s/`). |
 | **Phase 4: Docker Hub Registry** | ✅ Documented in Section 4 with cross-platform amd64 tagging & push. |
 | **Phase 5: Terraform Foundations** | ✅ Sydney `ap-southeast-2` custom VPC, EKS cluster, ECR, IAM, and budgets (`terraform/`). |
-| **Phase 6: GitHub Actions CI** | ✅ Maven verify, Terraform lint, Trivy scan, and smoke test in `.github/workflows/ci-cd.yml`. |
+| **Phase 6: GitHub Actions CI** | ✅ Dedicated modular CI workflows (`ci-task-service`, `ci-node-services`, `ci-go-notification`, `ci-rust-audit`, `ci-frontend`, `ci-infra-k8s`). |
 | **Phase 7: Controlled CD** | ✅ Keyless OIDC assume role and automated rolling EKS rollout. |
 | **Phase 8: Secrets & Storage** | ✅ AWS EBS CSI driver dynamic `gp3` storage class and Kubernetes secret decoupling. |
 | **Phase 9: Observability** | ✅ Actuator Prometheus metrics, health probes, and container logs. |

@@ -25,6 +25,11 @@ flowchart TD
             HPA["Horizontal Pod Autoscaler<br/>(CPU 70% / Mem 80%)"]
             PDB["PodDisruptionBudget<br/>(minAvailable: 1)"]
             
+            subgraph AuthPod ["auth-service Pod (Node.js)"]
+                AuthInitC["initContainer: wait-for-postgres"]
+                AuthC["auth-service:3001 (JWT + pg)"]
+                AuthInitC -->|Wait for 5432 OK| AuthC
+            end
             subgraph PodGroup ["taskflow-app Pods"]
                 InitC["initContainer: wait-for-postgres<br/>(busybox:1.36 + nc)"]
                 AppC["App Container: taskflow-app<br/>(Non-root UID 10001, Java 17)"]
@@ -34,9 +39,9 @@ flowchart TD
 
         subgraph PersistenceLayer ["Persistence Layer"]
             DBService["postgres-service:5432 (ClusterIP)"]
-            PostgresSS["postgres-0 (StatefulSet)"]
-            PVC["postgres-storage PVC (1Gi)"]
-            PV[("PersistentVolume<br/>local-path / AWS EBS")]
+            PostgresSS["postgres-0 (StatefulSet)<br/>DBs: taskflowdb + authdb"]
+            PVC["postgres-pvc (PVC, 1Gi)"]
+            PV[("PersistentVolume<br/>postgres-pv (K3s hostPath) / EBS gp3 (EKS)")]
         end
     end
 
@@ -47,7 +52,8 @@ flowchart TD
     AppService --> AppC
     HPA -.-> AppC
     PDB -.-> AppC
-    AppC -->|JDBC| DBService
+    AppC -->|JDBC taskflowdb| DBService
+    AuthC -->|pg authdb| DBService
     DBService --> PostgresSS
     PostgresSS --- PVC
     PVC --- PV
@@ -58,36 +64,38 @@ flowchart TD
 ```text
 [ External Client / Browser ]
          |
-         +-------------------------------------+
-         |                                     |
-         v (Local K3s)                         v (AWS EKS)
-  NodePort 30080                   AWS Network Load Balancer (NLB)
-         |                                     |
-         +------------------+------------------+
-                            |
-                            v
-             taskflow-service:8080 (ClusterIP)
-                            |
-   +------------------------v------------------------+
-   | Application Layer: taskflow-app (2..5 Pods)     |
-   |   - HPA: Scales 2..5 at 70% CPU / 80% RAM       |
-   |   - PDB: minAvailable: 1                        |
-   |                                                 |
-   |   Pod Lifecycle:                                |
-   |     1. [initContainer: wait-for-postgres]       |
-   |           | (polls port 5432 until ready)       |
-   |           v                                     |
-   |     2. [App Container: taskflow-app (Java 17)]  |
-   +------------------------+------------------------+
-                            | JDBC Connection (Port 5432)
-                            v
-             postgres-service:5432 (ClusterIP)
-                            |
-             postgres-0 (PostgreSQL 16 StatefulSet)
-                            |
-             postgres-storage PVC (1Gi)
-                            |
-             PersistentVolume (local-path / AWS EBS gp3)
+         +----------------------------------------------------+
+         |                                                    |
+         v (Local K3s / K3d)                                  v (AWS EKS)
+  Traefik Ingress (:80 / :8081)                       AWS LoadBalancer (:80)
+  or NodePorts: :30088 (UI) / :30080 (API)                    |
+         |                                                    |
+         +-------------------------+--------------------------+
+                                   |
+                                   v
+                frontend-service:3000 (Next.js UI & BFF)
+                                   |
+    +--------------+---------------+---------------+--------------+--------------+
+    |              |               |               |              |              |
+    v              v               v               v              v              v
+taskflow-     auth-service    analytics-     scheduler-     notification-  audit-service
+service       :3001 (Node)    service        service        service        :8082 (Rust)
+:8080 (Java)       |          :3002 (Node)   :3003 (Node)   :8081 (Go)           |
+    |              |               |               |              |              v
+    +------+-------+               +-------+-------+--------------+        audit-pvc /data
+           |                               |                               (local-path / emptyDir)
+           v                               v
+postgres-service:5432            redis-service:6379
+(PostgreSQL 16:                  (Redis 7 Pub/Sub,
+ taskflowdb + authdb)             Cache & Alerts)
+           |
+           v
+  postgres-pvc (1Gi PVC)
+           |
+           v
+  PersistentVolume
+  - Local K3s: postgres-pv (hostPath /var/lib/taskflow/postgres)
+  - AWS EKS:   Dynamic EBS gp3 PV (ebs.csi.aws.com)
 ```
 
 ---
@@ -100,23 +108,34 @@ k8s/
 ├── aws.md                               # AWS Sydney (ap-southeast-2) EKS & ECS Deployment Guide
 ├── base/                                # Reusable, environment-agnostic base manifests
 │   ├── namespace.yaml                   # Dedicated 'taskflow' namespace
-│   ├── configmap.yaml                   # Environment variables (port, DB URL, actuator)
-│   ├── secret.yaml                      # DB credentials (base64 encoded)
+│   ├── configmap.yaml                   # taskflow-config & taskflow-mesh-config (DNS URLs)
+│   ├── secret.yaml                      # DB & JWT credentials
 │   ├── postgres-service.yaml            # Internal ClusterIP service for PostgreSQL
-│   ├── postgres-statefulset.yaml        # PostgreSQL 16 StatefulSet with 1Gi volumeClaimTemplate
-│   ├── app-deployment.yaml              # 2-replica Deployment with initContainer & probes
+│   ├── postgres-pvc.yaml                # PersistentVolumeClaim (1Gi RWO) for PostgreSQL
+│   ├── postgres-statefulset.yaml        # PostgreSQL 16 StatefulSet (mounts postgres-pvc)
+│   ├── redis.yaml                       # Redis 7 Deployment & ClusterIP Service (:6379)
+│   ├── app-deployment.yaml              # TaskFlow Java API Deployment with initContainer & probes
 │   ├── app-service.yaml                 # Internal ClusterIP service exposing port 8080
-│   ├── hpa.yaml                         # HorizontalPodAutoscaler (min 2, max 5)
+│   ├── microservices.yaml               # Auth (Node+PG), Analytics (Node), Scheduler (Node), Notif (Go), Audit (Rust)
+│   ├── frontend.yaml                    # Next.js Standalone UI & BFF Deployment + Service (:3000)
+│   ├── hpa.yaml                         # HorizontalPodAutoscaler (min 1, max 5)
 │   ├── pdb.yaml                         # PodDisruptionBudget ensuring minAvailable: 1
 │   └── kustomization.yaml               # Base Kustomize resource list
 └── overlays/
-    ├── local/                           # Local development overlay (K3s, K3d, Minikube)
-    │   ├── service-patch.yaml           # Patches app-service to NodePort 30080
-    │   └── kustomization.yaml           # Merges base with local patches
+    ├── local/                           # K3s / K3d / Minikube overlay
+    │   ├── pv.yaml                      # Static PersistentVolume postgres-pv (1Gi hostPath, Retain)
+    │   ├── pvc.yaml                     # K3s 'local-path' PVC for Rust Audit Service (audit-pvc, 256Mi)
+    │   ├── postgres-pvc-patch.yaml      # Binds postgres-pvc -> postgres-pv (storageClassName: manual)
+    │   ├── ingress.yaml                 # K3s Traefik Ingress (/ -> frontend, /swagger-ui -> taskflow-service)
+    │   ├── service-patch.yaml           # Patches taskflow-service to NodePort 30080
+    │   ├── frontend-service-patch.yaml  # Patches frontend-service to NodePort 30088
+    │   └── kustomization.yaml           # Merges base + PV/PVCs + Ingress + volume patches
     └── eks/                             # Production AWS EKS overlay
         ├── gp3-storageclass.yaml        # AWS EBS CSI dynamic GP3 storage class
-        ├── service-patch.yaml           # Configures AWS Network Load Balancer (NLB) annotations
-        └── kustomization.yaml           # Merges base with EKS patches
+        ├── postgres-pvc-patch.yaml      # Patches postgres-pvc to storageClassName: gp3
+        ├── frontend-service-patch.yaml  # Configures AWS internet-facing LoadBalancer (:80 -> :3000)
+        ├── service-patch.yaml           # Legacy taskflow-service NLB patch
+        └── kustomization.yaml           # Merges base with EKS patches & Docker Hub images
 ```
 
 ---
@@ -126,39 +145,109 @@ k8s/
 | Manifest | Kind | Description | Key Settings / Guarantees |
 |---|---|---|---|
 | [namespace.yaml](file:///c:/Users/Sidharth/Desktop/taskflow-devops/k8s/base/namespace.yaml) | `Namespace` | Isolates all TaskFlow components | Name: `taskflow` |
-| [configmap.yaml](file:///c:/Users/Sidharth/Desktop/taskflow-devops/k8s/base/configmap.yaml) | `ConfigMap` | Non-sensitive runtime variables | Points JDBC URL to `postgres-service:5432` |
-| [secret.yaml](file:///c:/Users/Sidharth/Desktop/taskflow-devops/k8s/base/secret.yaml) | `Secret` | Database credentials | Base64 encoded `POSTGRES_USER` & `POSTGRES_PASSWORD` |
-| [postgres-service.yaml](file:///c:/Users/Sidharth/Desktop/taskflow-devops/k8s/base/postgres-service.yaml) | `Service` | Stable DNS for PostgreSQL | ClusterIP on port `5432` |
-| [postgres-statefulset.yaml](file:///c:/Users/Sidharth/Desktop/taskflow-devops/k8s/base/postgres-statefulset.yaml) | `StatefulSet` | PostgreSQL 16 server | Mounts `1Gi` PVC with `PGDATA` pointing to subfolder |
-| [app-deployment.yaml](file:///c:/Users/Sidharth/Desktop/taskflow-devops/k8s/base/app-deployment.yaml) | `Deployment` | TaskFlow Spring Boot API | 2 Replicas, non-root user `10001`, liveness/readiness probes |
-| [app-service.yaml](file:///c:/Users/Sidharth/Desktop/taskflow-devops/k8s/base/app-service.yaml) | `Service` | Exposes TaskFlow internally | ClusterIP on port `8080` (patched in overlays) |
-| [hpa.yaml](file:///c:/Users/Sidharth/Desktop/taskflow-devops/k8s/base/hpa.yaml) | `HorizontalPodAutoscaler` | Dynamic autoscaling | Scale between 2 and 5 pods at 70% CPU / 80% RAM |
-| [pdb.yaml](file:///c:/Users/Sidharth/Desktop/taskflow-devops/k8s/base/pdb.yaml) | `PodDisruptionBudget` | High availability during maintenance | Ensures `minAvailable: 1` during node drains or upgrades |
+| [configmap.yaml](file:///c:/Users/Sidharth/Desktop/taskflow-devops/k8s/base/configmap.yaml) | `ConfigMap` | Runtime env vars | `taskflow-config` (Spring/DB) + `taskflow-mesh-config` (Redis & microservice URLs) |
+| [secret.yaml](file:///c:/Users/Sidharth/Desktop/taskflow-devops/k8s/base/secret.yaml) | `Secret` | Sensitive credentials | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `JWT_SECRET` |
+| [postgres-pvc.yaml](file:///c:/Users/Sidharth/Desktop/taskflow-devops/k8s/base/postgres-pvc.yaml) | `PersistentVolumeClaim` | PostgreSQL storage claim | `postgres-pvc` (`1Gi`, `ReadWriteOnce`), bound to `postgres-pv` (K3s) or `gp3` (EKS) |
+| [postgres-statefulset.yaml](file:///c:/Users/Sidharth/Desktop/taskflow-devops/k8s/base/postgres-statefulset.yaml) | `StatefulSet` | PostgreSQL 16 server | Mounts `postgres-pvc`; hosts `taskflowdb` + `authdb` |
+| [redis.yaml](file:///c:/Users/Sidharth/Desktop/taskflow-devops/k8s/base/redis.yaml) | `Deployment` + `Service` | Redis 7 (`redis:7-alpine`) | Pub/Sub (`taskflow:events`), analytics cache & notifications (`:6379`) |
+| [app-deployment.yaml](file:///c:/Users/Sidharth/Desktop/taskflow-devops/k8s/base/app-deployment.yaml) | `Deployment` | TaskFlow Java API (`:8080`) | `wait-for-postgres` initContainer, UID `10001`, health probes |
+| [microservices.yaml](file:///c:/Users/Sidharth/Desktop/taskflow-devops/k8s/base/microservices.yaml) | `Deployment` + `Service` | 5 Polyglot Microservices | `auth` (`:3001`, Postgres `authdb`), `analytics` (`:3002`), `scheduler` (`:3003`), `notification` (`:8081`), `audit` (`:8082`) |
+| [frontend.yaml](file:///c:/Users/Sidharth/Desktop/taskflow-devops/k8s/base/frontend.yaml) | `Deployment` + `Service` | Next.js Dashboard & BFF | Standalone image, UID `10001`, `/api/health` probes (`:3000`) |
+| [hpa.yaml](file:///c:/Users/Sidharth/Desktop/taskflow-devops/k8s/base/hpa.yaml) | `HorizontalPodAutoscaler` | Dynamic autoscaling | Scales `taskflow-app` between 1 and 5 pods at 75% CPU |
+| [pdb.yaml](file:///c:/Users/Sidharth/Desktop/taskflow-devops/k8s/base/pdb.yaml) | `PodDisruptionBudget` | High availability | Guarantees `minAvailable: 1` during node drains |
+
+---
+
+## 🧩 How Kustomize Works in TaskFlow
+
+TaskFlow uses **Kubernetes-native Kustomize** (built directly into `kubectl`) so one clean set of `base/` manifests can be deployed anywhere without duplicating YAML files or maintaining complex Helm templates.
+
+### Base vs. Environment Overlays
+
+| Feature | `k8s/base/` | `k8s/overlays/local/` (K3s / K3d) | `k8s/overlays/eks/` (AWS EKS) |
+|---|---|---|---|
+| **Namespace** | `taskflow` | Inherits `taskflow` | Inherits `taskflow` |
+| **External Exposure** | `ClusterIP` only (internal) | `NodePort` (`30088` UI, `30080` API) + Traefik `Ingress` | Single AWS `LoadBalancer` (`frontend-service :80 -> :3000`) |
+| **Database Storage (PV + PVC)** | `postgres-pvc` (`1Gi` RWO) mounted in `StatefulSet/postgres` | Explicit `PersistentVolume/postgres-pv` (`hostPath`, `Retain`) + `postgres-pvc` (`manual`) + JSON 6902 patch for `audit-pvc` (`local-path`) | `postgres-pvc` patched to `storageClassName: gp3` + `gp3-storageclass.yaml` (dynamic EBS PV) |
+| **Container Images** | Local tags (`taskflow-*:latest`) | Uses locally imported `k3d` / `k3s ctr` images | **`images:` transformer** → `sidharthhhh/taskflow-*` |
+
+### Key Kustomize Techniques Used
+
+1. **Strategic Merge Patches (`patches: - path: ...`)**:
+   - Used in `postgres-pvc-patch.yaml`, `frontend-service-patch.yaml`, and `service-patch.yaml` to bind `postgres-pvc` (`manual` + `volumeName: postgres-pv` on K3s, `gp3` on EKS), override `spec.type` (`ClusterIP` → `NodePort` or `LoadBalancer`), and attach cloud annotations (`service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"`).
+   - Uses `$patch: replace` where list fields like `spec.ports` should replace the base list instead of appending duplicate port names.
+2. **JSON 6902 Patches (`op: replace`)**:
+   - Used in [`k8s/overlays/local/kustomization.yaml`](file:///c:/Users/Sidharth/Desktop/taskflow-devops/k8s/overlays/local/kustomization.yaml) on `/spec/template/spec/volumes/0` for `Deployment/audit-service` (`emptyDir: {}` → `audit-pvc`).
+   - Why? A Strategic Merge Patch cannot cleanly delete `emptyDir: {}` when switching to `persistentVolumeClaim:` (a Kubernetes volume cannot contain both keys). JSON 6902 `op: replace` swaps the exact array entry cleanly.
+3. **Immutable Image Tag Injection (`images:` & `kustomize edit set image`)**:
+   - In [`k8s/overlays/eks/kustomization.yaml`](file:///c:/Users/Sidharth/Desktop/taskflow-devops/k8s/overlays/eks/kustomization.yaml), the `images:` block rewrites all 7 container images at render time without editing `base/`:
+     ```yaml
+     images:
+       - name: taskflow-app
+         newName: sidharthhhh/taskflow-app
+         newTag: latest
+       - name: taskflow-frontend
+         newName: sidharthhhh/taskflow-frontend
+         newTag: latest
+       # (+ auth, analytics, scheduler, notification, audit)
+     ```
+   - In CI/CD ([`cd-deploy.yml`](file:///c:/Users/Sidharth/Desktop/taskflow-devops/.github/workflows/cd-deploy.yml)), `kustomize edit set image` dynamically pins every image to `${{ github.sha }}` before `kubectl apply -k .`.
+
+### Essential Kustomize Commands
+
+```bash
+# Preview the exact YAML Kustomize will generate (dry-run without applying)
+kubectl kustomize k8s/overlays/local
+kubectl kustomize k8s/overlays/eks
+
+# Diff live cluster state against an overlay before deploying
+kubectl diff -k k8s/overlays/local
+
+# Apply or delete an entire environment stack in one command
+kubectl apply -k k8s/overlays/local
+kubectl delete -k k8s/overlays/local
+
+# Override an image tag dynamically in the EKS overlay
+cd k8s/overlays/eks && kustomize edit set image taskflow-frontend=sidharthhhh/taskflow-frontend:v1.0.1
+```
 
 ---
 
 ## 🚀 Deployment Instructions
 
-### 1. Local Deployment with K3s (via `k3d`)
+### 1A. Local Deployment on K3s (via `k3d`)
 
-`k3d` runs lightweight K3s clusters inside local Docker containers, providing a near-instant Kubernetes environment.
+`k3d` runs lightweight K3s clusters inside local Docker containers, including K3s's built-in **Traefik Ingress** and **`local-path` storage provisioner**.
 
 #### Step 1: Create the K3d Cluster
-Expose NodePort `30080` and LoadBalancer `8081` on your local machine:
+Expose NodePorts `30088` (Next.js UI), `30080` (Java API), and Traefik LoadBalancer `8081`:
 ```bash
 k3d cluster create taskflow \
   --api-port 6550 \
+  -p "30088:30088@server:0" \
   -p "30080:30080@server:0" \
   -p "8081:80@loadbalancer"
 ```
 
-#### Step 2: Build & Import Application Container
+#### Step 2: Build & Import All 7 Container Images
 ```bash
-# Build image from the app directory
-docker build -t taskflow-app:latest ./app
+docker build -t taskflow-app:latest ./services/task-service
+docker build -t taskflow-auth-service:latest ./services/auth-service
+docker build -t taskflow-analytics-service:latest ./services/analytics-service
+docker build -t taskflow-scheduler-service:latest ./services/scheduler-service
+docker build -t taskflow-notification-service:latest ./services/notification-service
+docker build -t taskflow-audit-service:latest ./services/audit-service
+docker build -t taskflow-frontend:latest ./frontend
 
-# Import the image directly into k3d
-k3d image import taskflow-app:latest -c taskflow
+k3d image import \
+  taskflow-app:latest \
+  taskflow-auth-service:latest \
+  taskflow-analytics-service:latest \
+  taskflow-scheduler-service:latest \
+  taskflow-notification-service:latest \
+  taskflow-audit-service:latest \
+  taskflow-frontend:latest \
+  -c taskflow
 ```
 
 #### Step 3: Deploy via Kustomize Local Overlay
@@ -168,21 +257,18 @@ kubectl apply -k k8s/overlays/local
 
 #### Step 4: Verify Rollout Status
 ```bash
-# Watch pods until all are 1/1 Running
+# Watch all 9 pods until Running
 kubectl get pods -n taskflow -w
 
-# Wait for deployment rollout to finish
-kubectl rollout status deployment/taskflow-app -n taskflow --timeout=90s
-
-# Verify services, PVCs, and HPA
-kubectl get svc,pvc,hpa,pdb -n taskflow
+# Verify services, Traefik Ingress, PV/PVCs, and HPA
+kubectl get svc,ingress,pv,pvc,hpa -n taskflow
 ```
 
-#### Step 5: Test the Application
-- **Swagger UI**: [http://localhost:30080/swagger-ui.html](http://localhost:30080/swagger-ui.html)
-- **Actuator Health**: [http://localhost:30080/actuator/health](http://localhost:30080/actuator/health)
-- **Prometheus Metrics**: [http://localhost:30080/actuator/prometheus](http://localhost:30080/actuator/prometheus)
-- **App Metadata**: [http://localhost:30080/api/info](http://localhost:30080/api/info)
+#### Step 5: Access the Stack
+- **Next.js Control Plane UI (Traefik Ingress)**: [http://localhost:8081](http://localhost:8081)
+- **Next.js Control Plane UI (NodePort)**: [http://localhost:30088](http://localhost:30088)
+- **Swagger UI (Task Service)**: [http://localhost:30080/swagger-ui.html](http://localhost:30080/swagger-ui.html)
+- **Actuator Health & Metrics**: [http://localhost:30080/actuator/health](http://localhost:30080/actuator/health) · [http://localhost:30080/actuator/prometheus](http://localhost:30080/actuator/prometheus)
 
 #### Step 6: Cleanup
 ```bash
@@ -192,30 +278,57 @@ k3d cluster delete taskflow
 
 ---
 
-### 2. Production Deployment on AWS EKS
+### 1B. Native Single-Node / VM K3s Deployment (Linux / Ubuntu / WSL2)
 
-The EKS overlay provisions an **AWS Network Load Balancer (NLB)** utilizing the official AWS Load Balancer Controller.
+If running **bare-metal / VM K3s directly** (without `k3d`), import locally built Docker images into K3s's `containerd` runtime and apply the same `k8s/overlays/local` overlay:
 
-#### Step 1: Build & Push Image to Amazon ECR
 ```bash
-export AWS_REGION="us-east-1"
-export AWS_ACCOUNT_ID="123456789012"
-export ECR_REPO="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/taskflow-app"
+# 1. Build all 7 images with Docker
+docker build -t taskflow-app:latest ./services/task-service
+docker build -t taskflow-auth-service:latest ./services/auth-service
+docker build -t taskflow-analytics-service:latest ./services/analytics-service
+docker build -t taskflow-scheduler-service:latest ./services/scheduler-service
+docker build -t taskflow-notification-service:latest ./services/notification-service
+docker build -t taskflow-audit-service:latest ./services/audit-service
+docker build -t taskflow-frontend:latest ./frontend
 
-# Authenticate Docker client to ECR
-aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REPO}
+# 2. Import images directly into K3s containerd
+for img in taskflow-app taskflow-auth-service taskflow-analytics-service taskflow-scheduler-service taskflow-notification-service taskflow-audit-service taskflow-frontend; do
+  docker save "${img}:latest" | sudo k3s ctr images import -
+done
 
-# Build and push tagged container
-docker build -t ${ECR_REPO}:v1.0.0 ./app
-docker push ${ECR_REPO}:v1.0.0
+# 3. Deploy K3s overlay (uses K3s Traefik Ingress + local-path PVCs + NodePorts)
+sudo k3s kubectl apply -k k8s/overlays/local
+
+# 4. Verify pods, PV/PVCs, and Ingress
+sudo k3s kubectl get pods,svc,ingress,pv,pvc -n taskflow
 ```
 
-#### Step 2: Configure Image in EKS Overlay
-Update `k8s/overlays/eks/kustomization.yaml` or use `kustomize edit`:
+Access via Traefik on port `80` (`http://<K3S_NODE_IP>/`) or NodePort `http://<K3S_NODE_IP>:30088`!
+
+---
+
+### 2. Production Deployment on AWS EKS (`ap-southeast-2` Sydney)
+
+The EKS overlay (`k8s/overlays/eks`) exposes **`frontend-service`** via EKS's built-in in-tree AWS LoadBalancer (`port 80 -> 3000`) and maps all 7 container images to Docker Hub (`sidharthhhh/*`) or Amazon ECR. *(See [**`k8s/aws.md`**](file:///c:/Users/Sidharth/Desktop/taskflow-devops/k8s/aws.md) for the complete AWS setup guide.)*
+
+#### Step 1: Build & Push Images (Docker Hub or Amazon ECR)
+```bash
+export DOCKER_USER="sidharthhhh"
+docker build --platform linux/amd64 -t ${DOCKER_USER}/taskflow-app:latest ./services/task-service
+docker build --platform linux/amd64 -t ${DOCKER_USER}/taskflow-auth-service:latest ./services/auth-service
+docker build --platform linux/amd64 -t ${DOCKER_USER}/taskflow-analytics-service:latest ./services/analytics-service
+docker build --platform linux/amd64 -t ${DOCKER_USER}/taskflow-scheduler-service:latest ./services/scheduler-service
+docker build --platform linux/amd64 -t ${DOCKER_USER}/taskflow-notification-service:latest ./services/notification-service
+docker build --platform linux/amd64 -t ${DOCKER_USER}/taskflow-audit-service:latest ./services/audit-service
+docker build --platform linux/amd64 -t ${DOCKER_USER}/taskflow-frontend:latest ./frontend
+```
+
+#### Step 2: Override Image Tags via Kustomize *(Optional if using `:latest`)*
 ```bash
 cd k8s/overlays/eks
-kustomize edit set image taskflow-app=${ECR_REPO}:v1.0.0
-cd ../../
+kustomize edit set image taskflow-frontend=${DOCKER_USER}/taskflow-frontend:v1.0.0
+cd ../../..
 ```
 
 #### Step 3: Apply Manifests
@@ -225,17 +338,18 @@ kubectl apply -k k8s/overlays/eks
 
 #### Step 4: Monitor LoadBalancer Provisioning
 ```bash
-kubectl get svc taskflow-service -n taskflow -w
+kubectl get svc frontend-service -n taskflow -w
 ```
-Wait until the `EXTERNAL-IP` resolves to an AWS DNS name (e.g., `k8s-taskflow-xxx.elb.us-east-1.amazonaws.com`).
+Wait until `EXTERNAL-IP` resolves to an AWS ELB DNS name (e.g., `xxx.ap-southeast-2.elb.amazonaws.com`).
 
-#### Step 5: Verify Production Endpoints
+#### Step 5: Verify Live Stack
 ```bash
-curl http://<EXTERNAL-IP>/actuator/health
-curl http://<EXTERNAL-IP>/api/info
+# Open Next.js UI in browser: http://<EXTERNAL-IP>/
+curl http://<EXTERNAL-IP>/api/health
+curl http://<EXTERNAL-IP>/api/tasks
 ```
 
-#### Step 6: Cleanup
+#### Step 6: Cleanup (Always delete K8s LoadBalancer before `terraform destroy`)
 ```bash
 kubectl delete -k k8s/overlays/eks
 ```
@@ -246,13 +360,12 @@ kubectl delete -k k8s/overlays/eks
 
 ### Rolling Restarts & Updates
 ```bash
-# Restart deployment pods gracefully without downtime
+# Restart any microservice deployment gracefully without downtime
+kubectl rollout restart deployment/taskflow-frontend -n taskflow
 kubectl rollout restart deployment/taskflow-app -n taskflow
 
-# View rollout status
+# View rollout status & revision history
 kubectl rollout status deployment/taskflow-app -n taskflow
-
-# View rollout revision history
 kubectl rollout history deployment/taskflow-app -n taskflow
 
 # Rollback to previous deployment revision
@@ -261,16 +374,20 @@ kubectl rollout undo deployment/taskflow-app -n taskflow
 
 ### Manual Scaling
 ```bash
-# Scale application pods to 4 replicas (HPA will adjust if enabled)
-kubectl scale deployment/taskflow-app -n taskflow --replicas=4
+# Scale application pods (HPA will adjust if minReplicas isn't updated)
+kubectl scale deployment/taskflow-app -n taskflow --replicas=2
 ```
 
 ### Port Forwarding (Debugging without NodePort/LB)
 ```bash
-# Forward application port 8080 to local port 8080
+# Forward Next.js UI & BFF port 3000 to local port 3000
+kubectl port-forward svc/frontend-service -n taskflow 3000:3000
+
+# Forward Task Service API port 8080
 kubectl port-forward svc/taskflow-service -n taskflow 8080:8080
 
-# Forward PostgreSQL port 5432 to local port 5432
+# Forward Redis (6379) & PostgreSQL (5432)
+kubectl port-forward svc/redis-service -n taskflow 6379:6379
 kubectl port-forward svc/postgres-service -n taskflow 5432:5432
 ```
 
@@ -402,11 +519,14 @@ Real-world operational issues, underlying root causes, and step-by-step remedies
   Check StorageClasses:
   ```bash
   kubectl get sc
-  kubectl describe pvc postgres-storage-postgres-0 -n taskflow
+  kubectl get pv,pvc -n taskflow
+  kubectl describe pvc postgres-pvc -n taskflow
   ```
   On AWS EKS, verify the Amazon EBS CSI driver add-on is installed:
   ```bash
   aws eks describe-addon --cluster-name <cluster-name> --addon-name aws-ebs-csi-driver
+  # Or enable it if not yet installed:
+  aws eks create-addon --cluster-name <cluster-name> --addon-name aws-ebs-csi-driver
   ```
 
 ---
@@ -477,14 +597,18 @@ Real-world operational issues, underlying root causes, and step-by-step remedies
 ---
 
 ### Scenario 10: Direct Database Inspection via `psql`
-To directly inspect database tables, schemas, and live rows in Kubernetes:
+To directly inspect both databases (`taskflowdb` and `authdb`), schemas, and live rows in Kubernetes:
 ```bash
 # Exec into postgres-0 pod with psql
 kubectl exec -it -n taskflow postgres-0 -- psql -U taskflow -d taskflowdb
 
 # Useful inspection queries:
-\dt                   # List tables (tasks should be present)
-\d tasks              # Describe tasks table schema
+\l                    # List databases (taskflowdb and authdb should be present)
+\dt                   # List tables in taskflowdb (tasks)
 SELECT id, title, status, created_at FROM tasks;
+
+\c authdb             # Switch to auth-service database
+\dt                   # List tables in authdb (auth_users)
+SELECT email, name, role, created_at FROM auth_users;
 \q                    # Exit psql
 ```

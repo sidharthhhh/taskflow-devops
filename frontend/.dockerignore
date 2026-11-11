@@ -1,0 +1,17 @@
+node_modules/
+.next/
+out/
+.git
+.gitignore
+.dockerignore
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+*.md
+*.log
+*.tmp
+*.tsbuildinfo
+.env*
+npm-debug.log*
+Dockerfile*

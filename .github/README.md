@@ -1,109 +1,49 @@
-# 🚀 TaskFlow CI/CD Pipeline (GitHub Actions)
+# 🚀 TaskFlow CI/CD Pipelines (GitHub Actions)
 
-This directory contains the automated **Continuous Integration and Continuous Deployment (CI/CD)** pipeline for **TaskFlow**, orchestrated using **GitHub Actions**, **Docker**, **Amazon ECR**, and **Amazon EKS**.
-
----
-
-## 🏗️ Pipeline Architecture
-
-```mermaid
-flowchart TD
-    subgraph Trigger ["GitHub Event Trigger"]
-        Push["Push to main / k8s"]
-        PR["Pull Request to main"]
-        Manual["workflow_dispatch (Manual Run)"]
-    end
-
-    subgraph Stage1 ["Stage 1: CI Testing"]
-        JavaTest["1. Maven Build & Tests<br/>(JUnit 5 & MockMvc, Java 17)"]
-        IaCVal["2. Infra Validation<br/>(Terraform fmt/validate + Kustomize check)"]
-    end
-
-    subgraph Stage2 ["Stage 2: Container Security"]
-        DockerBuild["3. Docker Multi-Stage Build<br/>(taskflow-app:SHA)"]
-        TrivyScan["4. Trivy Vulnerability Scanner<br/>(HIGH & CRITICAL CVE check)"]
-        SmokeTest["5. Container Smoke Test<br/>(curl /actuator/health == UP)"]
-        DockerBuild --> TrivyScan
-        DockerBuild --> SmokeTest
-    end
-
-    subgraph Stage3 ["Stage 3: CD to AWS (Main branch or manual)"]
-        OIDCAuth["6. Keyless AWS OIDC Auth<br/>(Assume IAM Role without static keys)"]
-        ECRPush["7. Push Image to Amazon ECR<br/>(:SHA and :latest tags)"]
-        EKSDeploy["8. Rolling Update to Amazon EKS<br/>(kustomize set image + kubectl apply)"]
-        RolloutCheck["9. Verify Rollout & Health Check"]
-        Rollback["10. Auto-Rollback on Failure<br/>(kubectl rollout undo)"]
-        
-        OIDCAuth --> ECRPush
-        ECRPush --> EKSDeploy
-        EKSDeploy --> RolloutCheck
-        RolloutCheck -.->|If Failed| Rollback
-    end
-
-    Push --> JavaTest
-    Push --> IaCVal
-    PR --> JavaTest
-    PR --> IaCVal
-    Manual --> JavaTest
-    Manual --> IaCVal
-
-    JavaTest --> DockerBuild
-    IaCVal --> DockerBuild
-
-    SmokeTest --> OIDCAuth
-```
+This directory contains **7 modular, path-filtered CI/CD workflows** tailored for the **`sidharth/feature`** and **`main`** branches, supporting polyglot microservices (Java, Node.js, Golang, Rust, Next.js), Docker Hub / Amazon ECR, and Amazon EKS (`ap-southeast-2`).
 
 ---
 
-## 📋 Pipeline Jobs Breakdown
+## 🏗️ Modular Pipeline Architecture
 
-| Job | Trigger | Key Steps & Tools |
+Each microservice and infrastructure layer has its own isolated CI workflow using GitHub `paths:` filtering so only modified components run their build, scan, and container smoke tests:
+
+| Workflow File | Trigger Paths | Jobs & Verification |
 |---|---|---|
-| **`test-and-verify`** | Push & PR | • Sets up Java 17 (Temurin)<br>• Runs `mvn clean verify`<br>• Executes 21 unit & integration tests<br>• Uploads Surefire test reports artifact |
-| **`validate-infrastructure`** | Push & PR | • Validates Terraform syntax (`terraform fmt -check`, `terraform validate`)<br>• Validates both `k8s/overlays/local` and `k8s/overlays/eks` with `kubectl kustomize` |
-| **`docker-build-and-scan`** | Push & PR | • Multi-stage Docker build with GitHub Actions layer caching<br>• Scans image for CVE vulnerabilities using **Aqua Security Trivy**<br>• Uploads SARIF security scan results to GitHub Code Scanning<br>• Runs ephemeral container locally and verifies `/actuator/health` probe returns `{"status":"UP"}` |
-| **`push-to-ecr`** | Push to `main` / `k8s` or manual | • Assumes AWS IAM role via **Keyless GitHub OIDC**<br>• Authenticates Docker to Amazon ECR<br>• Tags and pushes immutable image (`:${{ github.sha }}`) and `:latest` |
-| **`deploy-to-eks`** | Push to `main` or manual | • Connects to EKS cluster via `aws eks update-kubeconfig`<br>• Injects immutable SHA image tag into `k8s/overlays/eks`<br>• Executes `kubectl apply -k k8s/overlays/eks`<br>• Monitors `kubectl rollout status` (180s timeout)<br>• **Automatically rolls back** (`kubectl rollout undo`) if rollout fails |
+| [`ci-task-service.yml`](workflows/ci-task-service.yml) | `services/task-service/**` | Maven `verify`, JUnit/MockMvc tests, multi-stage Docker build, Trivy CVE scan, H2 `/actuator/health` smoke test |
+| [`ci-node-services.yml`](workflows/ci-node-services.yml) | `services/{auth,analytics,scheduler}-service/**` | Matrix build across all 3 Node.js 22 services, `npm test`, Docker build, Trivy scan, `/health` smoke tests |
+| [`ci-go-notification.yml`](workflows/ci-go-notification.yml) | `services/notification-service/**` | `go vet`, `go test -v ./...`, static Alpine Docker build, Trivy scan, `/health` smoke test |
+| [`ci-rust-audit.yml`](workflows/ci-rust-audit.yml) | `services/audit-service/**` | `cargo fmt --check`, `cargo clippy`, `cargo test`, musl Alpine Docker build, Trivy scan, `/health` smoke test |
+| [`ci-frontend.yml`](workflows/ci-frontend.yml) | `frontend/**` | `tsc --noEmit`, `npm run build`, Next.js standalone Docker build, Trivy scan, `/api/health` smoke test |
+| [`ci-infra-k8s.yml`](workflows/ci-infra-k8s.yml) | `terraform/**`, `k8s/**`, `docker-compose.yml` | `terraform fmt -check`, `terraform validate`, `docker compose config -q`, `kubectl kustomize` (`local` & `eks`) |
+| [`cd-deploy.yml`](workflows/cd-deploy.yml) | `main` (when `DEPLOY_ENABLED=true`) or `workflow_dispatch` | Matrix build & push all 7 images to Docker Hub (`linux/amd64`), inject tags into `k8s/overlays/eks`, deploy to EKS with auto-rollback |
 
 ---
 
-## 🔐 Configuring Keyless AWS Authentication (OIDC)
+## 🔐 Configuring Secrets & Variables
 
-The pipeline uses **OpenID Connect (OIDC)** to securely assume an AWS IAM role without storing permanent, static AWS access keys in GitHub Secrets.
+Navigate to **GitHub Repository > Settings > Secrets and variables > Actions**:
 
-### 1. Provision the OIDC Role with Terraform
-The role is already configured in [terraform/github-oidc.tf](file:///c:/Users/Sidharth/Desktop/taskflow-devops/terraform/github-oidc.tf).
-Run Terraform to output the role ARN:
-```bash
-cd terraform
-terraform output -raw github_actions_role_arn
-```
-Example output: `arn:aws:iam::123456789012:role/taskflow-prod-github-actions-role`
+### Repository Secrets (`Secrets` tab)
+| Secret Name | Purpose |
+|---|---|
+| `DOCKERHUB_USERNAME` | Docker Hub username (e.g., `sidharthhhh`) for pushing container images |
+| `DOCKERHUB_TOKEN` | Docker Hub Personal Access Token (PAT) |
+| `AWS_ACCESS_KEY_ID` | IAM user access key (used when AWS Organization SCP restricts OIDC provider creation) |
+| `AWS_SECRET_ACCESS_KEY` | IAM user secret key |
+| `AWS_ROLE_ARN` | *(Optional)* IAM Role ARN if using keyless GitHub OIDC auth |
 
-### 2. Configure GitHub Repository Secrets & Variables
-In your GitHub repository, navigate to **Settings > Secrets and variables > Actions**:
-
-#### Secret:
-| Secret Name | Value | Description |
+### Repository Variables (`Variables` tab)
+| Variable Name | Default Value | Purpose |
 |---|---|---|
-| `AWS_ROLE_ARN` | `arn:aws:iam::<ACCOUNT_ID>:role/taskflow-prod-github-actions-role` | The IAM Role ARN for OIDC authentication |
-
-#### Variables (Optional - defaults are provided in workflow):
-| Variable Name | Default Value | Description |
-|---|---|---|
-| `AWS_REGION` | `us-east-1` | AWS region where EKS and ECR reside |
-| `EKS_CLUSTER_NAME` | `taskflow-prod-cluster` | Name of the Amazon EKS cluster |
-| `ECR_REPOSITORY` | `taskflow-app` | Name of the Amazon ECR repository |
+| `AWS_REGION` | `ap-southeast-2` | AWS region where EKS cluster resides |
+| `EKS_CLUSTER_NAME` | `taskflow-prod-cluster` | Target Amazon EKS cluster name |
+| `DEPLOY_ENABLED` | `false` | Safety gate preventing automatic paid cloud deployments until set to `true` |
 
 ---
 
-## 🛡️ Built-in Resilience & Rollback
+## 🛡️ Built-in Safety & Rollback
 
-If a bad deployment is merged or an unexpected bug prevents pods from passing the `/actuator/health/readiness` probe:
-1. Kubernetes prevents traffic from reaching the newly launched pods.
-2. `kubectl rollout status` reaches its 180-second timeout and exits with error code 1.
-3. The `if: failure()` step triggers:
-   ```bash
-   kubectl rollout undo deployment/taskflow-app -n taskflow
-   ```
-4. The deployment is instantly rolled back to the previous stable revision with **zero downtime**.
+1. **Branch & Path Isolation**: Pushes to `sidharth/feature` run fast, isolated CI validation and Trivy security scans without touching live AWS infrastructure.
+2. **Gated CD Deployment**: Cloud deployment in `cd-deploy.yml` runs only on explicit `workflow_dispatch` or on `main` when `DEPLOY_ENABLED == 'true'`.
+3. **Automated Rollback**: If any deployment rollout times out (`kubectl rollout status --timeout=180s`), the pipeline automatically executes `kubectl rollout undo` for `taskflow-app` and `taskflow-frontend`.

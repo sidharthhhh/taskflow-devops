@@ -1,0 +1,95 @@
+name: CI - Rust Audit Logs Service
+
+on:
+  push:
+    branches: [sidharth/feature, main, master]
+    paths:
+      - 'services/audit-service/**'
+      - '.github/workflows/ci-rust-audit.yml'
+  pull_request:
+    branches: [sidharth/feature, main, master]
+    paths:
+      - 'services/audit-service/**'
+      - '.github/workflows/ci-rust-audit.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  rust-test:
+    name: Cargo Fmt, Clippy & Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Cargo Dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: services/audit-service
+
+      - name: Run Fmt, Clippy & Cargo Test
+        working-directory: services/audit-service
+        run: |
+          cargo fmt --check
+          cargo clippy -- -D warnings
+          cargo test
+
+  docker-build-and-scan:
+    name: Docker Build, Trivy Scan & Smoke Test
+    runs-on: ubuntu-latest
+    needs: [rust-test]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Audit Service Image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./services/audit-service
+          file: ./services/audit-service/Dockerfile
+          load: true
+          tags: taskflow-audit-service:${{ github.sha }}
+          cache-from: type=gha,scope=audit-service
+          cache-to: type=gha,mode=max,scope=audit-service
+
+      - name: Trivy Vulnerability Scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: taskflow-audit-service:${{ github.sha }}
+          format: 'sarif'
+          output: 'trivy-audit-service.sarif'
+          severity: 'HIGH,CRITICAL'
+          ignore-unfixed: true
+
+      - name: Upload Trivy SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-audit-service.sarif'
+          category: 'audit-service'
+
+      - name: Container Health Smoke Test
+        run: |
+          docker run -d --name smoke-audit -p 8082:8082 \
+            taskflow-audit-service:${{ github.sha }}
+          trap 'docker rm -f smoke-audit || true' EXIT
+
+          for i in $(seq 1 15); do
+            if curl -fsS http://localhost:8082/health | grep -q '"status":"UP"'; then
+              echo "audit-service health check passed!"
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs smoke-audit
+          exit 1
+

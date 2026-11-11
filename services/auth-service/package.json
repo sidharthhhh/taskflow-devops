@@ -1,0 +1,16 @@
+{
+  "name": "taskflow-auth-service",
+  "version": "1.0.0",
+  "description": "Lightweight JWT authentication microservice for TaskFlow",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --check src/index.js"
+  },
+  "dependencies": {
+    "express": "^4.21.1",
+    "jsonwebtoken": "^9.0.2",
+    "pg": "^8.13.1"
+  }
+}
+

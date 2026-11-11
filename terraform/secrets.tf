@@ -9,9 +9,14 @@ resource "random_password" "db_password" {
   override_special = "!#$%&*()-_=+[]{}<>:?"
 }
 
+resource "random_password" "jwt_secret" {
+  length  = 48
+  special = false
+}
+
 resource "aws_secretsmanager_secret" "db_credentials" {
   name                    = "${var.project_name}/${var.environment}/db-credentials"
-  description             = "Production PostgreSQL credentials for TaskFlow application"
+  description             = "Production PostgreSQL and JWT credentials for TaskFlow microservices"
   recovery_window_in_days = 0 # Immediate deletion on destroy for dev/lab environments
 
   tags = {
@@ -24,11 +29,13 @@ resource "aws_secretsmanager_secret" "db_credentials" {
 resource "aws_secretsmanager_secret_version" "db_credentials_val" {
   secret_id = aws_secretsmanager_secret.db_credentials.id
   secret_string = jsonencode({
-    username = "taskflow"
-    password = random_password.db_password.result
-    dbname   = "taskflowdb"
-    port     = 5432
-    host     = "postgres-service.taskflow.svc.cluster.local"
+    username   = "taskflow"
+    password   = random_password.db_password.result
+    dbname     = "taskflowdb"
+    port       = 5432
+    host       = "postgres-service.taskflow.svc.cluster.local"
+    jwt_secret = random_password.jwt_secret.result
+    redis_url  = "redis://redis-service.taskflow.svc.cluster.local:6379"
   })
 }
 

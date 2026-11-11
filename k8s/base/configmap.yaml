@@ -11,3 +11,20 @@ data:
   SPRING_JPA_HIBERNATE_DDL_AUTO: "update"
   SPRING_H2_CONSOLE_ENABLED: "false"
   JAVA_OPTS: "-XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: taskflow-mesh-config
+  namespace: taskflow
+data:
+  REDIS_URL: "redis://redis-service:6379"
+  TASK_SERVICE_URL: "http://taskflow-service:8080"
+  AUTH_SERVICE_URL: "http://auth-service:3001"
+  ANALYTICS_SERVICE_URL: "http://analytics-service:3002"
+  SCHEDULER_SERVICE_URL: "http://scheduler-service:3003"
+  NOTIFICATION_SERVICE_URL: "http://notification-service:8081"
+  AUDIT_SERVICE_URL: "http://audit-service:8082"
+  CACHE_TTL_SEC: "10"
+  CRON_INTERVAL_MS: "30000"
+  AUDIT_LOG_PATH: "/data/audit.jsonl"

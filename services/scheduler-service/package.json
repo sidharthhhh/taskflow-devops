@@ -1,0 +1,15 @@
+{
+  "name": "taskflow-scheduler-service",
+  "version": "1.0.0",
+  "description": "Cron and periodic task reminder scheduler microservice for TaskFlow",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --check src/index.js"
+  },
+  "dependencies": {
+    "express": "^4.21.1",
+    "ioredis": "^5.4.1"
+  }
+}
+

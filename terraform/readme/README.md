@@ -8,24 +8,24 @@ This documentation provides an end-to-end guide to the **Terraform Infrastructur
 
 ```mermaid
 flowchart TD
-    subgraph "AWS Cloud (Region: us-east-1)"
+    subgraph "AWS Cloud (Region: ap-southeast-2 / Sydney)"
         subgraph "VPC: 10.0.0.0/16"
             IGW["Internet Gateway"]
             
-            subgraph "Public Subnets (AZ1 & AZ2)"
+            subgraph "Public Subnets (ap-southeast-2a & 2b)"
                 PubSub1["Public Subnet 1 (10.0.1.0/24)"]
                 PubSub2["Public Subnet 2 (10.0.2.0/24)"]
                 NATGW["NAT Gateway (in PubSub1)"]
-                NLB["AWS Network Load Balancer (ELB)"]
+                ELB["AWS Load Balancer (Frontend :80 -> :3000)"]
             end
             
-            subgraph "Private Subnets (AZ1 & AZ2)"
+            subgraph "Private Subnets (ap-southeast-2a & 2b)"
                 PrivSub1["Private Subnet 1 (10.0.10.0/24)"]
                 PrivSub2["Private Subnet 2 (10.0.20.0/24)"]
                 
-                subgraph "EKS Managed Node Group"
-                    Node1["Worker Node 1 (t3.medium)"]
-                    Node2["Worker Node 2 (t3.medium)"]
+                subgraph "EKS Managed Node Group (AL2023)"
+                    Node1["Worker Nodes 1..4 (t3.micro Free-Tier)"]
+                    Node2["9 Workloads: Frontend + 6 Services + Redis + Postgres"]
                 end
             end
             
@@ -33,31 +33,29 @@ flowchart TD
             IGW <--> PubSub2
             NATGW <--> PrivSub1
             NATGW <--> PrivSub2
-            NLB --> Node1
-            NLB --> Node2
+            ELB --> Node1
+            ELB --> Node2
         end
 
         subgraph "Managed Services"
-            EKS["Amazon EKS Control Plane (v1.30)<br/>OIDC Provider enabled"]
-            ECR["Amazon ECR: taskflow-app<br/>(Scan on push, Lifecycle policy)"]
-            SM["AWS Secrets Manager<br/>(taskflow/prod/db-credentials)"]
+            EKS["Amazon EKS Control Plane (v1.31)<br/>Node IAM Role with EBS CSI Policy"]
+            ECR["7 Amazon ECR Repos (for_each)<br/>Scan on push, Lifecycle policy"]
+            SM["AWS Secrets Manager<br/>(DB + JWT + Redis Secrets)"]
             S3Backup["S3 Backup Bucket<br/>(Versioned, Encrypted, 30-day retention)"]
             Budget["AWS Budgets ($25/mo Cost Guardrail)"]
         end
 
         subgraph "Identity & CI/CD"
-            GHOIDC["GitHub OIDC Provider<br/>token.actions.githubusercontent.com"]
-            GHRole["IAM Role: github-actions-role<br/>Scoped to repo:sidharthhhh/taskflow-devops"]
+            IAM["IAM / GitHub Secrets<br/>(SCP-compatible or OIDC when permitted)"]
         end
     end
 
     EKS -.->|Manages| Node1
     EKS -.->|Manages| Node2
-    GHOIDC --> GHRole
-    GHRole -->|Push Image| ECR
-    GHRole -->|Deploy| EKS
-    Node1 -->|Pulls Image| ECR
-    Node1 -->|Reads DB Secret| SM
+    IAM -->|Push 7 Images| ECR
+    IAM -->|Deploy| EKS
+    Node1 -->|Pulls Images| ECR
+    Node1 -->|Reads Secrets| SM
     Node1 -->|Exports pg_dump| S3Backup
 ```
 

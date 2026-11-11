@@ -1,24 +1,21 @@
 # 🌍 TaskFlow Infrastructure as Code (Terraform)
 
-This directory contains modular, production-grade **Terraform** configurations to provision the AWS cloud infrastructure for **TaskFlow**.
+This directory contains modular **Terraform** configurations to provision the AWS cloud infrastructure for the **TaskFlow Polyglot Microservices Platform** in **`ap-southeast-2` (Sydney)**.
 
 ---
 
 ## 🏛️ Architecture Overview
 
-The Terraform manifests automate the complete deployment of:
-- **Networking (`modules/vpc`)**: Multi-AZ VPC with public and private subnets, Internet Gateway, NAT Gateway, route tables, and required Kubernetes ELB discovery tags (`kubernetes.io/role/elb = 1`, `kubernetes.io/role/internal-elb = 1`).
-- **Container Registry (`modules/ecr`)**: Amazon ECR repository with automated image vulnerability scanning on push, AES-256 encryption, and lifecycle retention policies (expires untagged images older than 14 days, keeps last 30 tagged images).
+- **Networking (`modules/vpc`)**: Dedicated VPC (`10.0.0.0/16`) across `ap-southeast-2a` and `ap-southeast-2b` with public & private subnets, Internet Gateway, NAT Gateway, route tables, and Kubernetes ELB discovery tags (`kubernetes.io/role/elb = 1`, `kubernetes.io/role/internal-elb = 1`).
+- **Multi-Service Container Registry (`modules/ecr`)**: Provisions **7 Amazon ECR repositories** via `for_each` (`taskflow-app`, `taskflow-auth-service`, `taskflow-analytics-service`, `taskflow-scheduler-service`, `taskflow-notification-service`, `taskflow-audit-service`, `taskflow-frontend`), each with push vulnerability scanning, AES-256 encryption, and 30-image lifecycle policies.
 - **Kubernetes Cluster (`modules/eks`)**:
-  - Amazon EKS cluster (v1.30) with control plane logging (API, audit, authenticator).
-  - Managed Node Group in private subnets with auto-scaling (`min: 2`, `desired: 2`, `max: 4`) using `t3.medium` instances.
-  - OIDC Identity Provider for **IAM Roles for Service Accounts (IRSA)**.
-  - **AWS EBS CSI Driver Add-on** with dedicated IRSA role for dynamic PersistentVolume provisioning (required for PostgreSQL StatefulSet).
-- **Keyless CI/CD Security (`github-oidc.tf`)**: OpenID Connect (OIDC) identity provider and scoped IAM role enabling GitHub Actions to authenticate without long-lived AWS access keys.
-- **Secrets Management (`secrets.tf`)**: AWS Secrets Manager storing PostgreSQL credentials with KMS encryption, integrated for Kubernetes External Secrets Operator.
-- **Disaster Recovery Foundation (`backup.tf`)**: Versioned and encrypted S3 bucket with 30-day lifecycle retention policy and IAM policy for scheduled database dump CronJobs.
-- **Cost Guardrails (`budget.tf`)**: AWS Budget monitoring monthly spend with automated email notifications at 80% and 100% thresholds.
-- **Remote State Foundation (`bootstrap/`)**: S3 bucket with versioning and AES-256 encryption + DynamoDB table for distributed state locking.
+  - Amazon EKS control plane (`v1.31`, lifecycle `ignore_changes = [version]`) with API/audit/authenticator logs.
+  - Managed Node Group in private subnets running **Amazon Linux 2023 (`AL2023_x86_64_STANDARD`)** on Free-Tier eligible **`t3.micro`** instances (`min: 2`, `desired: 4`, `max: 6` = 16 pod slots).
+  - Node IAM role directly includes `AmazonEBSCSIDriverPolicy` so storage works even in AWS Organizations whose SCP restricts `iam:CreateOpenIDConnectProvider`.
+- **Secrets Management (`secrets.tf`)**: AWS Secrets Manager storing generated PostgreSQL credentials (`username`, `password`, `dbname`, `host`) and a 48-char `jwt_secret` for `auth-service` + `redis_url`.
+- **Disaster Recovery (`backup.tf`)**: Versioned, encrypted S3 bucket with 30-day lifecycle rules for database dumps.
+- **Cost Guardrails (`budget.tf`)**: AWS Budget ($25/mo default) with automated alerts at 80% actual and 100% forecasted spend.
+- **Optional Remote State (`bootstrap/` & `versions.tf`)**: S3 bucket + DynamoDB lock table; local state is enabled by default in `versions.tf` for fast solo setup.
 
 ---
 
@@ -26,33 +23,25 @@ The Terraform manifests automate the complete deployment of:
 
 ```text
 terraform/
-├── README.md                            # This comprehensive infrastructure guide
-├── bootstrap/                           # State storage bootstrap (run first)
-│   ├── main.tf                          # S3 state bucket & DynamoDB lock table
-│   ├── variables.tf                     # Bootstrap configuration inputs
-│   └── outputs.tf                       # State bucket name & backend code snippet
+├── README.md                            # This infrastructure guide
+├── readme/README.md                     # Deep architectural & troubleshooting reference
+├── bootstrap/                           # Optional remote S3 state & DynamoDB lock table
+│   ├── main.tf
+│   ├── variables.tf
+│   └── outputs.tf
 ├── modules/
-│   ├── vpc/                             # Modular VPC and networking
-│   │   ├── main.tf
-│   │   ├── variables.tf
-│   │   └── outputs.tf
-│   ├── ecr/                             # Amazon ECR container registry
-│   │   ├── main.tf
-│   │   ├── variables.tf
-│   │   └── outputs.tf
-│   └── eks/                             # Amazon EKS cluster & managed node group
-│       ├── main.tf
-│       ├── variables.tf
-│       └── outputs.tf
-├── versions.tf                          # Provider requirements & remote backend block
-├── providers.tf                         # AWS provider with default tags
-├── variables.tf                         # Root input variables with defaults
-├── main.tf                              # Module orchestration (VPC, ECR, EKS)
-├── github-oidc.tf                       # GitHub Actions keyless OIDC IAM role
-├── secrets.tf                           # AWS Secrets Manager DB credentials
-├── backup.tf                            # S3 backup bucket & lifecycle rules
-├── budget.tf                            # AWS cost budget alerts
-├── outputs.tf                           # Safe deployment outputs (cluster, ECR, IAM)
+│   ├── vpc/                             # VPC, subnets, IGW, NAT Gateway, route tables
+│   ├── ecr/                             # Reusable ECR repository + lifecycle policy module
+│   └── eks/                             # EKS control plane, AL2023 node group, core add-ons
+├── versions.tf                          # Terraform & provider version constraints (local state default)
+├── providers.tf                         # AWS provider with default project tags
+├── variables.tf                         # Root input variables (ap-southeast-2, t3.micro, 7 ECR repos)
+├── main.tf                              # Orchestrates VPC, for_each ECR, and EKS modules
+├── github-oidc.tf                       # Optional GitHub OIDC role (commented when SCP restricts OIDC)
+├── secrets.tf                           # Secrets Manager DB + JWT credentials
+├── backup.tf                            # Encrypted S3 backup bucket
+├── budget.tf                            # AWS monthly cost alerts
+├── outputs.tf                           # Cluster name, kubeconfig command, ECR URL map, ARNs
 └── terraform.tfvars.example             # Input variables template
 ```
 
@@ -61,131 +50,66 @@ terraform/
 ## 🚀 Step-by-Step Deployment Guide
 
 ### Prerequisites
-- [Terraform](https://www.terraform.io/downloads.html) >= 1.5.0 installed
-- [AWS CLI](https://aws.amazon.com/cli/) installed and configured (`aws configure`)
+- [Terraform](https://www.terraform.io/downloads.html) `>= 1.5.0`
+- [AWS CLI v2](https://aws.amazon.com/cli/) configured for `ap-southeast-2` (`aws configure`)
 - [kubectl](https://kubernetes.io/docs/tasks/tools/) installed
-- Permissions to create VPC, IAM, EKS, ECR, S3, and Secrets Manager resources
 
 ---
 
-### Step 1: Provision S3 State Storage & DynamoDB Lock Table
-Before deploying the main cloud infrastructure, provision the dedicated AWS S3 bucket and DynamoDB table that securely store and lock the Terraform state:
+### Step 1: Configure Variables
+```powershell
+cd terraform
+Copy-Item terraform.tfvars.example terraform.tfvars
+```
+Review `terraform.tfvars` (pre-configured for Sydney `ap-southeast-2`, `t3.micro`, EKS `1.31`, and all 7 ECR repositories) and set `budget_alert_email` to your email address.
 
-```bash
-cd terraform/bootstrap
+*(Optional)* If you prefer remote S3 state instead of local state, first apply `terraform/bootstrap`, then uncomment the `backend "s3"` block in `versions.tf` with your account-specific bucket name (`taskflow-prod-tfstate-<ACCOUNT_ID>`).
+
+---
+
+### Step 2: Initialize, Format & Plan
+```powershell
+terraform fmt -check -recursive
 terraform init
-terraform plan
-terraform apply
-```
-
-The bootstrap outputs provide the exact S3 bucket name (e.g. `taskflow-prod-tfstate-123456789012`) and DynamoDB table name (`taskflow-prod-tflocks`).
-
-### Step 2: Configure S3 Backend for Root Infrastructure
-Return to the `terraform/` directory:
-
-```bash
-cd ..
-```
-
-Configure your S3 backend using either of these two methods:
-- **Method A (Recommended via `backend.hcl`)**:
-  ```bash
-  cp backend.hcl.example backend.hcl
-  # Edit backend.hcl with your S3 bucket name
-  terraform init -backend-config=backend.hcl
-  ```
-- **Method B (Direct in `versions.tf`)**:
-  Update `bucket = "taskflow-prod-tfstate-<YOUR_ACCOUNT_ID>"` in [versions.tf](file:///c:/Users/Sidharth/Desktop/taskflow-devops/terraform/versions.tf), then run `terraform init`.
-
----
-
-### Step 2: Configure Infrastructure Variables
-Navigate to the root `terraform/` directory and create your variable file:
-
-```bash
-cd ..
-cp terraform.tfvars.example terraform.tfvars
-```
-
-Edit `terraform.tfvars` with your custom settings:
-- `aws_region`: Target region (e.g., `us-east-1`)
-- `github_repo`: Your GitHub repository (`username/repository-name`)
-- `budget_alert_email`: Email to receive cost alerts
-
----
-
-### Step 3: Initialize and Validate
-```bash
-# Format check
-terraform fmt -recursive
-
-# Initialize providers and modules
-terraform init
-
-# Validate syntax and configuration
 terraform validate
-```
-
----
-
-### Step 4: Review the Execution Plan
-```bash
 terraform plan -out=tfplan
 ```
-Review the proposed resources. Ensure you are satisfied with the planned infrastructure before proceeding.
 
 ---
 
-### Step 5: Provision Infrastructure
-```bash
+### Step 3: Provision Infrastructure
+```powershell
 terraform apply tfplan
 ```
-> ⏱️ *Provisioning takes approximately 12–15 minutes (primarily for EKS control plane and node group provisioning).*
+*(Tip for Windows PowerShell: if targeting a module individually, always quote the target flag: `terraform apply -target="module.vpc" -auto-approve`.)*
+
+Provisioning takes ~10–15 minutes for the EKS control plane and AL2023 worker nodes.
 
 ---
 
-### Step 6: Connect `kubectl` to the New EKS Cluster
-Once provisioning completes, configure your local `kubectl` context using the output command:
-
-```bash
-# Configure kubeconfig
-aws eks update-kubeconfig --region us-east-1 --name taskflow-prod-cluster
-
-# Verify nodes are Ready
+### Step 4: Connect `kubectl` & Deploy Microservices
+```powershell
+# Update kubeconfig from Terraform output
+aws eks update-kubeconfig --region ap-southeast-2 --name taskflow-prod-cluster
 kubectl get nodes -o wide
-```
 
----
-
-### Step 7: Deploy TaskFlow to EKS
-Now apply the Kubernetes manifests configured for EKS:
-
-```bash
-cd ../k8s/overlays/eks
-
-# Set image to your provisioned ECR URL
-# ECR URL can be retrieved via: terraform -chdir=../../terraform output -raw ecr_repository_url
-kustomize edit set image taskflow-app=<YOUR_ECR_REPO_URL>:latest
-
-# Apply manifests
+# Deploy all 9 workloads via Kustomize
+cd ..\k8s\overlays\eks
 kubectl apply -k .
+kubectl get pods,svc -n taskflow
 ```
 
 ---
 
-## 🧹 Infrastructure Teardown (Destroy)
+## 🧹 Safe Infrastructure Teardown (Order Matters!)
 
-When you are finished testing or wish to tear down all cloud infrastructure to avoid ongoing charges:
+Always delete Kubernetes `LoadBalancer` services **before** running `terraform destroy`, otherwise orphaned AWS ELBs/ENIs will block VPC and subnet deletion with `DependencyViolation`:
 
-```bash
-# 1. Delete Kubernetes workloads first to release AWS Load Balancers
-kubectl delete -k ../k8s/overlays/eks
+```powershell
+# 1. Delete Kubernetes services & workloads first (wait ~60s for AWS ELB cleanup)
+kubectl delete -k ..\k8s\overlays\eks
 
-# 2. Destroy all AWS infrastructure via Terraform
-cd terraform
+# 2. Destroy all Terraform-managed AWS infrastructure
+cd ..\terraform
 terraform destroy -auto-approve
-
-# 3. (Optional) Tear down the bootstrap state storage
-cd bootstrap
-terraform destroy
 ```

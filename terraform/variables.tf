@@ -4,7 +4,7 @@
 variable "aws_region" {
   description = "AWS region for provisioning infrastructure"
   type        = string
-  default     = "us-east-1"
+  default     = "ap-southeast-2"
 }
 
 variable "project_name" {
@@ -22,11 +22,11 @@ variable "environment" {
 variable "owner" {
   description = "Team or individual owner tag"
   type        = string
-  default     = "DevOps-Team"
+  default     = "Sidharth"
 }
 
 variable "github_repo" {
-  description = "GitHub repository in 'owner/repo' format for OIDC trust policy"
+  description = "GitHub repository in 'owner/repo' format for tagging & optional OIDC"
   type        = string
   default     = "sidharthhhh/taskflow-devops"
 }
@@ -43,7 +43,7 @@ variable "vpc_cidr" {
 variable "availability_zones" {
   description = "Availability zones to deploy subnets across"
   type        = list(string)
-  default     = ["us-east-1a", "us-east-1b"]
+  default     = ["ap-southeast-2a", "ap-southeast-2b"]
 }
 
 variable "public_subnet_cidrs" {
@@ -74,9 +74,9 @@ variable "node_instance_types" {
 }
 
 variable "node_desired_size" {
-  description = "Desired number of worker nodes"
+  description = "Desired number of worker nodes (4 t3.micro nodes = 16 pod slots for all microservices)"
   type        = number
-  default     = 2
+  default     = 4
 }
 
 variable "node_min_size" {
@@ -88,7 +88,7 @@ variable "node_min_size" {
 variable "node_max_size" {
   description = "Maximum number of worker nodes"
   type        = number
-  default     = 4
+  default     = 6
 }
 
 variable "cluster_endpoint_public_access_cidrs" {
@@ -98,12 +98,20 @@ variable "cluster_endpoint_public_access_cidrs" {
 }
 
 # -----------------------------------------------------------------------------
-# ECR Configuration
+# ECR Configuration (All Polyglot Microservice Repositories)
 # -----------------------------------------------------------------------------
-variable "ecr_repository_name" {
-  description = "Name of the Amazon ECR repository"
-  type        = string
-  default     = "taskflow-app"
+variable "ecr_repositories" {
+  description = "List of Amazon ECR repositories for TaskFlow microservices and frontend"
+  type        = list(string)
+  default = [
+    "taskflow-app",
+    "taskflow-auth-service",
+    "taskflow-analytics-service",
+    "taskflow-scheduler-service",
+    "taskflow-notification-service",
+    "taskflow-audit-service",
+    "taskflow-frontend"
+  ]
 }
 
 variable "ecr_image_tag_mutability" {

@@ -1,0 +1,66 @@
+name: CI - Terraform, Kubernetes & Docker Compose
+
+on:
+  push:
+    branches: [sidharth/feature, main, master]
+    paths:
+      - 'terraform/**'
+      - 'k8s/**'
+      - 'docker-compose.yml'
+      - '.github/workflows/ci-infra-k8s.yml'
+  pull_request:
+    branches: [sidharth/feature, main, master]
+    paths:
+      - 'terraform/**'
+      - 'k8s/**'
+      - 'docker-compose.yml'
+      - '.github/workflows/ci-infra-k8s.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-terraform:
+    name: Terraform Format & Validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.10.0
+
+      - name: Check Terraform Formatting
+        run: terraform fmt -check -recursive terraform/
+
+      - name: Validate Root Terraform
+        working-directory: terraform
+        run: |
+          terraform init -backend=false
+          terraform validate
+
+      - name: Validate Bootstrap Terraform
+        working-directory: terraform/bootstrap
+        run: |
+          terraform init -backend=false
+          terraform validate
+
+  validate-k8s-and-compose:
+    name: Kustomize & Compose Validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate Docker Compose Schema
+        run: docker compose config > /dev/null
+
+      - name: Set up Kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Validate Local Kustomize Overlay
+        run: kubectl kustomize k8s/overlays/local > /dev/null
+
+      - name: Validate EKS Kustomize Overlay
+        run: kubectl kustomize k8s/overlays/eks > /dev/null

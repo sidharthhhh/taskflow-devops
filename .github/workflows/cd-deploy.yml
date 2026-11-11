@@ -1,0 +1,154 @@
+name: CD - Build, Push Docker Hub & Deploy to EKS
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - '.gitignore'
+  workflow_dispatch:
+    inputs:
+      push_to_dockerhub:
+        description: 'Build and push all 7 service images to Docker Hub'
+        required: true
+        type: boolean
+        default: true
+      deploy_to_eks:
+        description: 'Deploy updated Kustomize stack to AWS EKS (ap-southeast-2)'
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'ap-southeast-2' }}
+  EKS_CLUSTER_NAME: ${{ vars.EKS_CLUSTER_NAME || 'taskflow-prod-cluster' }}
+
+jobs:
+  push-images:
+    name: Build & Push (${{ matrix.svc.image }})
+    runs-on: ubuntu-latest
+    if: |
+      (github.event_name == 'workflow_dispatch' && inputs.push_to_dockerhub == true) ||
+      (github.event_name == 'push' && vars.DEPLOY_ENABLED == 'true')
+    strategy:
+      fail-fast: false
+      matrix:
+        svc:
+          - context: ./services/task-service
+            image: taskflow-app
+          - context: ./services/auth-service
+            image: taskflow-auth-service
+          - context: ./services/analytics-service
+            image: taskflow-analytics-service
+          - context: ./services/scheduler-service
+            image: taskflow-scheduler-service
+          - context: ./services/notification-service
+            image: taskflow-notification-service
+          - context: ./services/audit-service
+            image: taskflow-audit-service
+          - context: ./frontend
+            image: taskflow-frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check Docker Hub Credentials
+        id: check_dockerhub
+        run: |
+          if [ -n "${{ secrets.DOCKERHUB_USERNAME }}" ] && [ -n "${{ secrets.DOCKERHUB_TOKEN }}" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning ::DOCKERHUB_USERNAME or DOCKERHUB_TOKEN secret missing. Skipping push."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Log in to Docker Hub
+        if: steps.check_dockerhub.outputs.configured == 'true'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        if: steps.check_dockerhub.outputs.configured == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and Push to Docker Hub
+        if: steps.check_dockerhub.outputs.configured == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.svc.context }}
+          file: ${{ matrix.svc.context }}/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.svc.image }}:${{ github.sha }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.svc.image }}:latest
+          cache-from: type=gha,scope=cd-${{ matrix.svc.image }}
+          cache-to: type=gha,mode=max,scope=cd-${{ matrix.svc.image }}
+
+  deploy-to-eks:
+    name: Deploy Stack to Amazon EKS
+    runs-on: ubuntu-latest
+    needs: [push-images]
+    if: |
+      !failure() && !cancelled() && (
+        (github.event_name == 'workflow_dispatch' && inputs.deploy_to_eks == true) ||
+        (github.event_name == 'push' && vars.DEPLOY_ENABLED == 'true')
+      )
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials (OIDC)
+        if: secrets.AWS_ROLE_ARN != ''
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions-EKS-Deploy
+
+      - name: Configure AWS Credentials (IAM Access Keys Fallback)
+        if: secrets.AWS_ROLE_ARN == '' && secrets.AWS_ACCESS_KEY_ID != ''
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Update Kubeconfig for EKS
+        run: aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.EKS_CLUSTER_NAME }}
+
+      - name: Set up Kubectl & Kustomize
+        uses: azure/setup-kubectl@v4
+
+      - name: Inject Image Tags & Apply Kustomize Overlay
+        run: |
+          DOCKER_USER="${{ secrets.DOCKERHUB_USERNAME || 'sidharthhhh' }}"
+          IMAGE_TAG="${{ needs.push-images.result == 'success' && github.sha || 'latest' }}"
+          cd k8s/overlays/eks
+          kustomize edit set image \
+            taskflow-app="${DOCKER_USER}/taskflow-app:${IMAGE_TAG}" \
+            taskflow-auth-service="${DOCKER_USER}/taskflow-auth-service:${IMAGE_TAG}" \
+            taskflow-analytics-service="${DOCKER_USER}/taskflow-analytics-service:${IMAGE_TAG}" \
+            taskflow-scheduler-service="${DOCKER_USER}/taskflow-scheduler-service:${IMAGE_TAG}" \
+            taskflow-notification-service="${DOCKER_USER}/taskflow-notification-service:${IMAGE_TAG}" \
+            taskflow-audit-service="${DOCKER_USER}/taskflow-audit-service:${IMAGE_TAG}" \
+            taskflow-frontend="${DOCKER_USER}/taskflow-frontend:${IMAGE_TAG}"
+          kubectl apply -k .
+
+      - name: Verify Rollouts
+        run: |
+          for deploy in taskflow-app auth-service analytics-service scheduler-service notification-service audit-service taskflow-frontend; do
+            kubectl rollout status "deployment/${deploy}" -n taskflow --timeout=180s
+          done
+          kubectl get pods,svc -n taskflow -o wide
+
+      - name: Rollback Task & Frontend on Failure
+        if: failure()
+        run: |
+          kubectl rollout undo deployment/taskflow-app -n taskflow || true
+          kubectl rollout undo deployment/taskflow-frontend -n taskflow || true
+

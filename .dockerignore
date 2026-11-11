@@ -1,8 +1,41 @@
+# Build outputs & caches
 **/target/
+**/node_modules/
+**/.next/
+**/out/
+**/.terraform/
+**/*.tsbuildinfo
+
+# VCS, CI & Docs
 .git
+.github
 .gitignore
+.dockerignore
+*.md
+README*
+LICENSE
+
+# IDE & OS artifacts
 .vscode
 .idea
+.DS_Store
+Thumbs.db
+
+# Secrets, env & temporary files
 *.log
 *.tmp
+*.sarif
+.env
 **/.env
+*.env
+
+# Non-task-service directories (root Dockerfile builds services/task-service)
+frontend/
+k8s/
+terraform/
+plan/
+services/auth-service/
+services/analytics-service/
+services/scheduler-service/
+services/notification-service/
+services/audit-service/

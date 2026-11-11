@@ -8,9 +8,28 @@ resources:
   - gp3-storageclass.yaml
 
 patches:
-  - path: service-patch.yaml
+  - path: postgres-pvc-patch.yaml
+  - path: frontend-service-patch.yaml
 
 images:
   - name: taskflow-app
     newName: sidharthhhh/taskflow-app
+    newTag: latest
+  - name: taskflow-auth-service
+    newName: sidharthhhh/taskflow-auth-service
+    newTag: latest
+  - name: taskflow-analytics-service
+    newName: sidharthhhh/taskflow-analytics-service
+    newTag: latest
+  - name: taskflow-scheduler-service
+    newName: sidharthhhh/taskflow-scheduler-service
+    newTag: latest
+  - name: taskflow-notification-service
+    newName: sidharthhhh/taskflow-notification-service
+    newTag: latest
+  - name: taskflow-audit-service
+    newName: sidharthhhh/taskflow-audit-service
+    newTag: latest
+  - name: taskflow-frontend
+    newName: sidharthhhh/taskflow-frontend
     newTag: latest

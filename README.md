@@ -1,28 +1,37 @@
-# 🚀 TaskFlow - DevOps-Ready To-Do List REST API
+# 🚀 TaskFlow - Polyglot Microservices DevOps Platform
 
-TaskFlow is a production-grade To-Do list REST API built with **Java 17** and **Spring Boot 3.3.x**. It is engineered for containerization and Kubernetes orchestration with zero-downtime rolling updates, PostgreSQL persistence, Prometheus metrics, health probes, and automated scaling.
+TaskFlow is a production-ready DevOps platform combining a **Java 17 / Spring Boot 3** core task service with **Golang**, **Rust**, **Node.js** microservices, **Redis 7**, **PostgreSQL 16**, and a **Next.js** dashboard UI — engineered with multi-stage non-root Alpine Docker images, Kustomize Kubernetes manifests, Terraform AWS IaC, and GitHub Actions CI/CD.
 
 ---
 
-> 📌 **Quick Navigation**: [🌐 AWS Cloud Architecture](#-whole-aws-cloud-environment-architecture) • [🤝 10 Manual Handshakes](#-manual-handshakes--required-human-efforts) • [☸️ Local K3s](#option-a-local-k3s-deployment-using-k3d) • [☁️ AWS EKS](#option-b-aws-eks-deployment) • [🚀 CI/CD](.github/README.md) • [🌍 Terraform IaC](terraform/README.md) • [🔧 Troubleshooting](#-comprehensive-troubleshooting-guide)
+> 📌 **Quick Navigation**: [🧩 Microservices Stack](#-polyglot-microservices-architecture) • [🌐 AWS Cloud Architecture](#-whole-aws-cloud-environment-architecture) • [🤝 10 Manual Handshakes](#-manual-handshakes--required-human-efforts) • [☸️ Local K3s](#option-a-local-k3s-deployment-using-k3d) • [☁️ AWS EKS](#option-b-aws-eks-deployment) • [🚀 CI/CD](.github/README.md) • [🌍 Terraform IaC](terraform/README.md) • [🔧 Troubleshooting](#-comprehensive-troubleshooting-guide)
+
+---
+
+## 🧩 Polyglot Microservices Architecture
+
+| Service | Tech Stack | Port | Docker Base Image | Responsibility |
+|---|---|---|---|---|
+| **Frontend UI & BFF** (`frontend/`) | Next.js 14 + Tailwind CSS | `3000` | `node:22-alpine` | Modern SaaS Kanban board, service mesh health monitor, runtime BFF proxy |
+| **Task Service** (`services/task-service/`) | Java 17 + Spring Boot 3 | `8080` | `eclipse-temurin:17-jre-alpine` | Task CRUD API, OpenAPI/Swagger, Actuator & Prometheus metrics |
+| **Auth Service** (`services/auth-service/`) | Node.js 22 + Express | `3001` | `node:22-alpine` | JWT authentication (`crypto.scrypt` + PostgreSQL `authdb`) |
+| **Analytics Service** (`services/analytics-service/`) | Node.js 22 + Express | `3002` | `node:22-alpine` | Real-time completion metrics with Redis TTL caching (`REDIS_HIT` / `LIVE_COMPUTE`) |
+| **Scheduler Service** (`services/scheduler-service/`) | Node.js 22 + Express | `3003` | `node:22-alpine` | Periodic task sweep & manual trigger publishing events to Redis Pub/Sub |
+| **Notification Service** (`services/notification-service/`) | Golang 1.22 + `go-redis` | `8081` | `alpine:3.20` | Subscribes to Redis `taskflow:events` Pub/Sub & serves alert feed |
+| **Audit Logs Service** (`services/audit-service/`) | Rust + Axum + Tokio | `8082` | `alpine:3.20` | Immutable append-only audit trail (`/data/audit.jsonl` volume) |
+| **Redis** (`redis:7-alpine`) | Redis 7 | `6379` | `redis:7-alpine` | Pub/Sub event bus, analytics cache & notification persistence |
+| **PostgreSQL** (`postgres:16-alpine`) | PostgreSQL 16 | `5432` | `postgres:16-alpine` | Relational DB hosting `taskflowdb` (tasks) & `authdb` (auth users) with PV/PVC |
 
 ---
 
 ## 📋 Features
 
-- **Framework**: Spring Boot 3.3.x, Spring Data JPA, Bean Validation
-- **Database**: PostgreSQL 16 (production / k8s / compose) & H2 in-memory (local dev / automated testing)
-- **Observability**: Spring Boot Actuator with `/actuator/health` (liveness & readiness) and `/actuator/prometheus` metrics export
-- **API Documentation**: OpenAPI 3 / Swagger UI (`/swagger-ui.html`)
-- **Containerization**: Multi-stage distroless-style Eclipse Temurin 17 JRE Docker image with non-root security (`uid: 10001`) and JVM container cgroup memory limits
+- **Core API (`services/task-service/`)**: Spring Boot 3.3.x, Spring Data JPA, Bean Validation, PostgreSQL 16 / H2, Actuator & Prometheus (`/actuator/prometheus`), Swagger UI (`/swagger-ui.html`)
+- **Docker Best Practices**: Multi-stage builds, dependency layer caching, `.dockerignore` files, non-root users (`10001` / `node`), lightweight Alpine images, and container `HEALTHCHECK` probes
 - **Kubernetes Architecture**:
-  - Declarative Kustomize setup (`base/` + `overlays/{local,eks}`)
+  - Declarative Kustomize setup (`base/` + `overlays/{local,eks}`) covering Redis, Postgres, all 6 backend microservices, and Next.js Frontend
   - Zero-downtime rolling updates with `readinessProbe` and `livenessProbe`
-  - Database startup synchronization via `wait-for-postgres` initContainer
-  - StatefulSet with PersistentVolumeClaim for PostgreSQL persistence (`PGDATA` safe)
-  - Horizontal Pod Autoscaler (HPA) targeting 70% CPU and 80% Memory
-  - Pod Disruption Budget (PDB) guaranteeing `minAvailable: 1`
-  - Graceful pod termination with 20s drain period
+  - Horizontal Pod Autoscaler (HPA) & Pod Disruption Budget (PDB)
 
 ---
 
@@ -31,60 +40,64 @@ TaskFlow is a production-grade To-Do list REST API built with **Java 17** and **
 ```text
 taskflow-devops/
 ├── .github/
-│   ├── README.md                                # GitHub Actions CI/CD pipeline documentation
+│   ├── README.md                                # GitHub Actions CI/CD pipelines documentation
 │   └── workflows/
-│       └── ci-cd.yml                            # Multi-stage CI/CD workflow (Test, Scan, ECR, EKS)
-├── app/
-│   ├── pom.xml                                  # Maven dependencies & build configuration
-│   ├── Dockerfile                               # Multi-stage optimized application container
-│   ├── .env.example                             # Environment variable template
-│   └── src/
-│       ├── main/
-│       │   ├── java/com/taskflow/
-│       │   │   ├── TaskflowApplication.java     # Spring Boot application entrypoint
-│       │   │   ├── controller/                  # REST controllers (/api/tasks, /api/info)
-│       │   │   ├── service/                     # Transactional business logic
-│       │   │   ├── repository/                  # Spring Data JPA repository
-│       │   │   ├── model/                       # Task entity, request/response DTOs, Enums
-│       │   │   ├── exception/                   # Global exception handler & error response
-│       │   │   └── config/                      # OpenAPI & Swagger UI configuration
-│       │   └── resources/
-│       │       └── application.yml              # Central configuration with env overrides
-│       └── test/                                # JUnit 5 & MockMvc integration tests
+│       ├── ci-task-service.yml                  # Java Spring Boot CI + Trivy + Smoke test
+│       ├── ci-node-services.yml                 # Matrix CI for Auth, Analytics & Scheduler
+│       ├── ci-go-notification.yml               # Go Notification Service CI
+│       ├── ci-rust-audit.yml                    # Rust Audit Logs Service CI
+│       ├── ci-frontend.yml                      # Next.js TypeScript & Standalone Docker CI
+│       ├── ci-infra-k8s.yml                     # Terraform, Kustomize & Compose validation CI
+│       └── cd-deploy.yml                        # Docker Hub push & AWS EKS deploy CD
+├── services/
+│   ├── task-service/                            # Java 17 Spring Boot Task API (:8080)
+│   │   ├── pom.xml
+│   │   ├── Dockerfile
+│   │   ├── .env.example
+│   │   └── src/
+│   ├── auth-service/                            # Node.js JWT auth service (:3001)
+│   ├── analytics-service/                       # Node.js analytics + Redis cache (:3002)
+│   ├── scheduler-service/                       # Node.js cron reminder scheduler (:3003)
+│   ├── notification-service/                    # Golang Redis Pub/Sub notifications (:8081)
+│   └── audit-service/                           # Rust Axum append-only audit logs (:8082)
+├── frontend/                                    # Next.js 14 Dashboard UI & BFF (:3000)
 ├── k8s/
 │   ├── README.md                                # Comprehensive Kubernetes architecture & guide
+│   ├── aws.md                                   # AWS EKS & ECS Sydney deployment guide
 │   ├── base/                                    # Cloud-agnostic base Kubernetes manifests
 │   │   ├── namespace.yaml                       # taskflow namespace
 │   │   ├── configmap.yaml                       # App config (ports, DB URL, actuator)
-│   │   ├── secret.yaml                          # DB credentials (base64 encoded)
+│   │   ├── secret.yaml                          # DB credentials
 │   │   ├── postgres-service.yaml                # ClusterIP service for PostgreSQL (port 5432)
-│   │   ├── postgres-statefulset.yaml            # StatefulSet with 1Gi volumeClaimTemplate
-│   │   ├── app-deployment.yaml                  # 2-replica deployment with initContainer & probes
+│   │   ├── postgres-pvc.yaml                    # PersistentVolumeClaim (1Gi RWO) for PostgreSQL
+│   │   ├── postgres-statefulset.yaml            # PostgreSQL 16 StatefulSet (mounts postgres-pvc)
+│   │   ├── redis.yaml                           # Redis 7 Deployment + Service (port 6379)
+│   │   ├── app-deployment.yaml                  # Spring Boot Task API deployment
 │   │   ├── app-service.yaml                     # Internal service (port 8080)
-│   │   ├── hpa.yaml                             # Autoscaler (min 2, max 5 pods)
-│   │   ├── pdb.yaml                             # PodDisruptionBudget (minAvailable: 1)
+│   │   ├── microservices.yaml                   # Deployments & Services for Go, Rust & Node.js services
+│   │   ├── frontend.yaml                        # Next.js UI & BFF Deployment + Service (port 3000)
+│   │   ├── hpa.yaml                             # Autoscaler
+│   │   ├── pdb.yaml                             # PodDisruptionBudget
 │   │   └── kustomization.yaml                   # Base Kustomize definition
 │   └── overlays/
-│       ├── local/                               # Local K3s / K3d overlay
-│       │   ├── service-patch.yaml               # NodePort 30080 exposure
-│       │   └── kustomization.yaml
-│       └── eks/                                 # AWS EKS production overlay
-│           ├── service-patch.yaml               # AWS Network Load Balancer (NLB) annotations
-│           └── kustomization.yaml
+│       ├── local/                               # Local K3s / K3d overlay (PV/PVCs, Ingress, NodePorts)
+│       └── eks/                                 # AWS EKS production overlay (GP3 PVC + LoadBalancer -> Frontend)
 ├── terraform/
 │   ├── README.md                                # Complete Terraform infrastructure guide
 │   ├── bootstrap/                               # Remote state S3 bucket & DynamoDB lock table
 │   ├── modules/                                 # Reusable VPC, ECR, and EKS modules
 │   │   ├── vpc/                                 # Multi-AZ VPC, subnets, NAT Gateway, IGW
 │   │   ├── ecr/                                 # Container registry with lifecycle scanning
-│   │   └── eks/                                 # EKS Cluster, node group, IRSA, EBS CSI driver
+│   │   └── eks/                                 # EKS Cluster, node group, EBS CSI driver
 │   ├── {main,variables,outputs,versions}.tf     # Core infrastructure orchestration
-│   ├── github-oidc.tf                           # Keyless GitHub Actions CI/CD IAM role
+│   ├── github-oidc.tf                           # Optional GitHub Actions OIDC IAM role
 │   ├── secrets.tf                               # AWS Secrets Manager DB credentials
 │   ├── backup.tf                                # S3 automated backup bucket & lifecycle
 │   ├── budget.tf                                # AWS budget & cost guardrail alerts
 │   └── terraform.tfvars.example                 # Variables configuration template
-├── docker-compose.yml                           # Local multi-container stack (App + PostgreSQL 16)
+├── plan/
+│   └── TaskFlow-DevOps-LLM-Implementation-Plan.md
+├── docker-compose.yml                           # Complete 9-container stack (Frontend, 6 Services, Redis, Postgres)
 ├── Dockerfile                                   # Root Dockerfile shortcut
 └── README.md
 ```
@@ -93,7 +106,7 @@ taskflow-devops/
 
 ## ⚙️ Environment Configuration
 
-Configuration is loaded from environment variables with sensible defaults defined in [application.yml](file:///c:/Users/Sidharth/Desktop/taskflow-devops/app/src/main/resources/application.yml):
+Configuration is loaded from environment variables with sensible defaults defined in [application.yml](file:///c:/Users/Sidharth/Desktop/taskflow-devops/services/task-service/src/main/resources/application.yml):
 
 | Variable | Local Default (H2) | Docker Compose / Kubernetes (PostgreSQL) | Description |
 |---|---|---|---|
@@ -111,7 +124,7 @@ Configuration is loaded from environment variables with sensible defaults define
 
 ### 1. Run with Maven (In-Memory H2)
 ```bash
-cd app
+cd services/task-service
 mvn spring-boot:run
 ```
 - API & Swagger UI: [http://localhost:8080/swagger-ui.html](http://localhost:8080/swagger-ui.html)
@@ -119,7 +132,7 @@ mvn spring-boot:run
 
 ### 2. Run Automated Tests
 ```bash
-cd app
+cd services/task-service
 mvn test
 ```
 
@@ -127,19 +140,23 @@ mvn test
 
 ## 🐳 Running with Docker & Docker Compose
 
-Docker Compose provisions a complete production-like stack with **PostgreSQL 16** and the **TaskFlow Application**:
+Docker Compose provisions the complete **9-container polyglot microservices stack** (`postgres:16-alpine`, `redis:7-alpine`, Java `task-service`, Node.js `auth`/`analytics`/`scheduler`, Golang `notification`, Rust `audit`, and Next.js `frontend`):
 
 ```bash
-# Build and start the containers in detached mode
+# Build and start all 9 containers in detached mode
 docker compose up --build -d
 
-# Check service status and health checks
+# Check status and health checks across all services
 docker compose ps
 
-# Follow application logs
-docker compose logs -f app
+# Open the Next.js Control Plane UI in your browser:
+# http://localhost:3000
+# Demo login: admin@taskflow.dev / admin123
 
-# Tear down the stack and remove persistent volume
+# Follow logs across services
+docker compose logs -f frontend task-service auth-service notification-service audit-service
+
+# Tear down the stack and remove persistent volumes
 docker compose down -v
 ```
 
@@ -170,11 +187,25 @@ k3d cluster create taskflow \
 #### 3. Build & Import Image into K3d
 Build the Docker image locally and import it directly into the `k3d` cluster without needing a remote registry:
 ```bash
-# Build the application image
-docker build -t taskflow-app:latest ./app
+# Build all 7 container images
+docker build -t taskflow-app:latest ./services/task-service
+docker build -t taskflow-auth-service:latest ./services/auth-service
+docker build -t taskflow-analytics-service:latest ./services/analytics-service
+docker build -t taskflow-scheduler-service:latest ./services/scheduler-service
+docker build -t taskflow-notification-service:latest ./services/notification-service
+docker build -t taskflow-audit-service:latest ./services/audit-service
+docker build -t taskflow-frontend:latest ./frontend
 
-# Import the image into the k3d cluster
-k3d image import taskflow-app:latest -c taskflow
+# Import the images into the k3d cluster
+k3d image import \
+  taskflow-app:latest \
+  taskflow-auth-service:latest \
+  taskflow-analytics-service:latest \
+  taskflow-scheduler-service:latest \
+  taskflow-notification-service:latest \
+  taskflow-audit-service:latest \
+  taskflow-frontend:latest \
+  -c taskflow
 ```
 
 #### 4. Deploy using Kustomize
@@ -185,14 +216,15 @@ kubectl apply -k k8s/overlays/local
 
 #### 5. Verify the Deployment
 ```bash
-# Check all resources in the taskflow namespace
-kubectl get all,pvc,hpa,pdb -n taskflow
+# Check all resources (including PersistentVolumes & PersistentVolumeClaims)
+kubectl get all,pv,pvc,hpa,pdb -n taskflow
 
 # Wait for application pods to be fully ready
 kubectl wait --namespace taskflow --for=condition=ready pod -l app=taskflow-app --timeout=90s
 ```
 
 #### 6. Access Application Endpoints
+- **Next.js Control Plane UI**: [http://localhost:30088](http://localhost:30088)
 - **Swagger UI**: [http://localhost:30080/swagger-ui.html](http://localhost:30080/swagger-ui.html)
 - **Application Info**: [http://localhost:30080/api/info](http://localhost:30080/api/info)
 - **Actuator Health**: [http://localhost:30080/actuator/health](http://localhost:30080/actuator/health)
@@ -206,135 +238,109 @@ k3d cluster delete taskflow
 
 ---
 
-### Option B: AWS EKS Deployment
+### Option B: AWS EKS Deployment (`ap-southeast-2` Sydney)
+
+> 📘 **Full AWS Step-by-Step Guide**: See [**`k8s/aws.md`**](file:///c:/Users/Sidharth/Desktop/taskflow-devops/k8s/aws.md) for complete instructions covering IAM CLI setup, custom VPC provisioning, Free-Tier `t3.micro` EKS & ECS Fargate paths, Docker Hub deployment, and safe teardown.
 
 #### 1. Prerequisites
-- AWS CLI configured (`aws configure`)
-- `eksctl` and `kubectl` installed
-- AWS Load Balancer Controller installed on your EKS cluster
+- AWS CLI configured (`aws configure` targeting `ap-southeast-2`)
+- `terraform` (`>= 1.5.0`) and `kubectl` installed
 
-#### 2. Build and Push Image to Amazon ECR
+#### 2. Provision VPC, 7 ECR Repositories & EKS via Terraform
 ```bash
-# Set your AWS account ID and region
-export AWS_REGION="us-east-1"
-export AWS_ACCOUNT_ID="123456789012"
-export ECR_REPO="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/taskflow-app"
-
-# Authenticate Docker to ECR
-aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REPO}
-
-# Build and push the image
-docker build -t ${ECR_REPO}:latest ./app
-docker push ${ECR_REPO}:latest
+cd terraform
+terraform init
+terraform apply -auto-approve
+aws eks update-kubeconfig --region ap-southeast-2 --name taskflow-prod-cluster
 ```
 
-#### 3. Update EKS Image Name & Deploy
-Update the image reference in `k8s/overlays/eks/kustomization.yaml` or set it dynamically:
+#### 3. Build & Push All 7 Images (Docker Hub or Amazon ECR)
 ```bash
-cd k8s/overlays/eks
-kustomize edit set image taskflow-app=${ECR_REPO}:latest
-cd ../../
+# Example using Docker Hub (matches k8s/overlays/eks/kustomization.yaml)
+export DOCKER_USER="sidharthhhh"
+docker build --platform linux/amd64 -t ${DOCKER_USER}/taskflow-app:latest ./services/task-service
+docker build --platform linux/amd64 -t ${DOCKER_USER}/taskflow-auth-service:latest ./services/auth-service
+docker build --platform linux/amd64 -t ${DOCKER_USER}/taskflow-analytics-service:latest ./services/analytics-service
+docker build --platform linux/amd64 -t ${DOCKER_USER}/taskflow-scheduler-service:latest ./services/scheduler-service
+docker build --platform linux/amd64 -t ${DOCKER_USER}/taskflow-notification-service:latest ./services/notification-service
+docker build --platform linux/amd64 -t ${DOCKER_USER}/taskflow-audit-service:latest ./services/audit-service
+docker build --platform linux/amd64 -t ${DOCKER_USER}/taskflow-frontend:latest ./frontend
+```
 
-# Apply manifests to EKS
+#### 4. Deploy & Retrieve Public Frontend LoadBalancer URL
+```bash
 kubectl apply -k k8s/overlays/eks
+kubectl get svc frontend-service -n taskflow -w
 ```
+Once `EXTERNAL-IP` resolves (e.g., `xxx.ap-southeast-2.elb.amazonaws.com`), open **`http://<EXTERNAL-IP>`** in your browser to access the Next.js Control Plane UI!
 
-#### 4. Monitor Provisioning & Retrieve Load Balancer URL
-The EKS overlay creates an AWS Network Load Balancer (NLB) via annotations:
-```bash
-# Watch the service until the External-IP is provisioned
-kubectl get svc taskflow-service -n taskflow -w
-```
-Once the `EXTERNAL-IP` appears (e.g., `k8s-taskflow-xxx.elb.us-east-1.amazonaws.com`), access:
-- Swagger UI: `http://<EXTERNAL-IP>/swagger-ui.html`
-- Health: `http://<EXTERNAL-IP>/actuator/health`
-
-#### 5. Teardown
+#### 5. Teardown (Always delete K8s LoadBalancers before `terraform destroy`)
 ```bash
 kubectl delete -k k8s/overlays/eks
+cd terraform && terraform destroy -auto-approve
 ```
 
 ---
 
 ## 🌐 Whole AWS Cloud Environment Architecture
 
-The target cloud infrastructure for TaskFlow is designed around high availability, security isolation, zero-downtime deployments, and disaster recovery on Amazon Web Services (AWS):
-
 ```mermaid
 flowchart TD
     subgraph Internet ["Public Internet"]
-        Client[External Clients / Browser / Swagger UI]
-        GHRunner[GitHub Actions CI/CD Runner]
+        Client[Browser / User / API Client]
+        GHRunner[GitHub Actions CI/CD Workflows]
     end
 
-    subgraph AWS ["AWS Cloud (Region: us-east-1)"]
-        subgraph VPC ["VPC: 10.0.0.0/16"]
+    subgraph AWS ["AWS Cloud (Region: ap-southeast-2 / Sydney)"]
+        subgraph VPC ["Custom VPC: 10.0.0.0/16"]
             IGW["Internet Gateway"]
-            
-            subgraph PublicSubnets ["Public Subnets (us-east-1a & us-east-1b)"]
-                NLB["AWS Network Load Balancer (NLB)<br/>Internet-facing :80 -> :8080"]
-                NATGW["NAT Gateway (in us-east-1a)<br/>Elastic IP"]
+
+            subgraph PublicSubnets ["Public Subnets (ap-southeast-2a & 2b)"]
+                ELB["AWS Load Balancer<br/>Internet-facing :80 -> :3000"]
+                NATGW["NAT Gateway (in 2a)<br/>Elastic IP"]
             end
 
-            subgraph PrivateSubnets ["Private Subnets (us-east-1a & us-east-1b)"]
-                subgraph NodeGroup ["EKS Managed Node Group (2..4 x t3.medium)"]
+            subgraph PrivateSubnets ["Private Subnets (ap-southeast-2a & 2b)"]
+                subgraph NodeGroup ["EKS Managed Node Group (AL2023, 2..6 x t3.micro)"]
                     subgraph K8sNamespace ["Kubernetes Namespace: taskflow"]
-                        AppSvc["taskflow-service:8080 (ClusterIP)"]
-                        
-                        subgraph Pods ["TaskFlow Spring Boot Pods (2..5 Replicas)"]
-                            InitC["initContainer: wait-for-postgres"]
-                            AppC["Container: taskflow-app<br/>Java 17, Non-root UID 10001"]
-                            InitC -->|Wait for 5432| AppC
-                        end
-                        
-                        DBSvc["postgres-service:5432 (ClusterIP)"]
-                        PostgresPod["PostgreSQL 16 (StatefulSet)"]
+                        FrontSvc["frontend-service:3000 (Next.js UI & BFF)"]
+                        TaskSvc["taskflow-service:8080 (Java Spring Boot)"]
+                        AuthSvc["auth-service:3001 (Node.js JWT)"]
+                        MeshSvcs["Analytics (:3002) · Scheduler (:3003)<br/>Notification (:8081 Go) · Audit (:8082 Rust)"]
+                        RedisPod["redis-service:6379 (Redis 7 Pub/Sub & Cache)"]
+                        DBPod["postgres-service:5432 (PostgreSQL 16)<br/>taskflowdb + authdb (PV/PVC)"]
                     end
                 end
-                
-                EBS[("AWS EBS gp3 Volume (1Gi)<br/>via AWS EBS CSI Driver")]
             end
 
-            IGW --> NLB
+            IGW --> ELB
             IGW --> NATGW
-            NATGW --> AppC
-            NLB --> AppSvc
-            AppSvc --> AppC
-            AppC -->|JDBC| DBSvc
-            DBSvc --> PostgresPod
-            PostgresPod --- EBS
+            NATGW --> FrontSvc
+            ELB --> FrontSvc
+            FrontSvc --> TaskSvc
+            FrontSvc --> AuthSvc
+            FrontSvc --> MeshSvcs
+            TaskSvc --> DBPod
+            AuthSvc --> DBPod
+            MeshSvcs --> RedisPod
         end
 
         subgraph ManagedServices ["AWS Managed Cloud Services"]
-            EKSControlPlane["Amazon EKS Control Plane (v1.30)<br/>Private & Public API Server"]
-            ECR["Amazon ECR: taskflow-app<br/>Vulnerability Scan on Push | 14d/30-img Lifecycle"]
-            SecretsMgr["AWS Secrets Manager<br/>taskflow/prod/db-credentials"]
+            EKSControlPlane["Amazon EKS Control Plane (v1.31)<br/>Private & Public API Server"]
+            ECR["7 Amazon ECR Repos (for_each)<br/>Scan on Push | 14d/30-img Lifecycle"]
+            SecretsMgr["AWS Secrets Manager<br/>DB + JWT + Redis Credentials"]
             S3Backup["Amazon S3 Backup Bucket<br/>AES-256 Encrypted | Versioned | 30d Lifecycle"]
             Budgets["AWS Budgets Guardrail<br/>$25/mo Spend Limit | 80% & 100% Alerts"]
-            
-            subgraph RemoteState ["Terraform Remote State Foundation"]
-                S3State["S3 Bucket: taskflow-prod-tfstate<br/>AES-256, Versioning, Prevent Destroy"]
-                DDBLock["DynamoDB Table: taskflow-prod-tflocks<br/>Pay-Per-Request LockID"]
-            end
-        end
-
-        subgraph SecurityOIDC ["Identity & Access Management (IAM)"]
-            GHOIDC["GitHub OIDC Provider<br/>token.actions.githubusercontent.com"]
-            GHIAMRole["IAM Role: github-actions-role<br/>Scoped strictly to repo:owner/repo"]
-            IRSA["EKS OIDC Provider (IRSA)<br/>EBS CSI Driver & External Secrets"]
         end
     end
 
     Client --> IGW
-    GHRunner -->|Keyless OIDC Token| GHOIDC
-    GHOIDC --> GHIAMRole
-    GHIAMRole -->|Push Docker Image| ECR
-    GHIAMRole -->|Update Deployment| EKSControlPlane
-    EKSControlPlane -.->|Orchestrates Pods| AppC
-    AppC -->|Pulls Image| ECR
-    AppC -.->|Reads Secret via IRSA| SecretsMgr
-    PostgresPod -.->|pg_dump CronJob| S3Backup
-    IRSA -.->|EBS Volume Attach| EBS
+    GHRunner -->|Push Images| ECR
+    GHRunner -->|Deploy Overlay| EKSControlPlane
+    EKSControlPlane -.->|Orchestrates| NodeGroup
+    NodeGroup -->|Pulls Images| ECR
+    NodeGroup -.->|Reads Secrets| SecretsMgr
+    DBPod -.->|Backups| S3Backup
 ```
 
 ---
@@ -346,12 +352,12 @@ While Terraform, Docker, and GitHub Actions automate over 95% of provisioning, r
 | # | Handshake Touchpoint | Why Human Effort is Mandatory | Exact Action Required | Location / Command |
 |---|---|---|---|---|
 | **1** | **AWS CLI & Credentials** | IaC cannot invent cloud permissions; it requires human authentication. | Run `aws configure` with an IAM user with EKS, VPC, EC2, IAM, ECR, S3, Secrets Manager, and Budgets permissions. | Local Terminal (`aws configure`) |
-| **2** | **Remote State Bootstrap** | Terraform cannot write to an S3 bucket before that bucket exists (chicken-and-egg dilemma). | Run `cd terraform/bootstrap && terraform init && terraform apply`. Copy the resulting S3 bucket name. | `terraform/bootstrap/` |
-| **3** | **Variable Customization** | Real emails, private repositories, and AWS regions must never be hardcoded in Git. | Copy `terraform.tfvars.example` to `terraform.tfvars` and set your real `budget_alert_email`, `github_repo`, and `aws_region`. | `terraform/terraform.tfvars` |
+| **2** | **Remote State Bootstrap *(Optional)*** | Local Terraform state is default; S3 remote state requires the bucket to exist first. | *(Optional)* Run `cd terraform/bootstrap && terraform apply` and enable `backend "s3"` in `versions.tf`. | `terraform/bootstrap/` |
+| **3** | **Variable Customization** | Real emails, private repositories, and AWS regions must never be hardcoded in Git. | Copy `terraform.tfvars.example` to `terraform.tfvars` and verify `budget_alert_email`, `github_repo`, and `aws_region` (`ap-southeast-2`). | `terraform/terraform.tfvars` |
 | **4** | **AWS Budget Email Confirmation** | AWS SNS anti-spam compliance requires human verification before sending cost breach alerts. | Open your email inbox (`budget_alert_email`) and **click "Confirm Subscription"** in the automated AWS Budgets email. | Personal Email Inbox |
-| **5** | **GitHub Actions OIDC Secret** | GitHub Actions runs externally and needs permission to assume your newly created AWS IAM role. | Retrieve the IAM role ARN via `terraform output -raw github_actions_role_arn` and save it as secret `AWS_ROLE_ARN`. | **GitHub Repo Settings > Secrets & variables > Actions** |
-| **6** | **Local Kubeconfig Context** | Your local machine's `kubectl` CLI must be pointed to the new cloud cluster endpoint. | Run `aws eks update-kubeconfig --region us-east-1 --name taskflow-prod-cluster` to establish cluster access. | Local Terminal (`aws eks update-kubeconfig`) |
-| **7** | **AWS Load Balancer Controller** | Kubernetes service annotations for AWS NLB cannot provision cloud load balancers without the controller. | Install the AWS Load Balancer Controller via Helm or eksctl (`helm install aws-load-balancer-controller ...`). | EKS Cluster (`kube-system` namespace) |
+| **5** | **GitHub Actions & Docker Hub Secrets** | GitHub Actions runs externally and needs credentials to push images and deploy. | Configure `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`, and `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` (or `AWS_ROLE_ARN`). | **GitHub Repo Settings > Secrets & variables > Actions** |
+| **6** | **Local Kubeconfig Context** | Your local machine's `kubectl` CLI must be pointed to the new cloud cluster endpoint. | Run `aws eks update-kubeconfig --region ap-southeast-2 --name taskflow-prod-cluster` to establish cluster access. | Local Terminal (`aws eks update-kubeconfig`) |
+| **7** | **AWS Load Balancer Exposure** | `frontend-service` uses EKS's in-tree LoadBalancer controller (`aws-load-balancer-scheme: internet-facing`). | No extra Helm controller needed; verify public subnets carry `kubernetes.io/role/elb = 1` (created by `modules/vpc`). | `k8s/overlays/eks/frontend-service-patch.yaml` |
 | **8** | **External Secrets Operator** | Production database passwords must never be stored in plain text inside Git or Kubernetes manifests. | Install External Secrets Operator (or sync `taskflow/prod/db-credentials` into `secret.yaml`) before starting app pods. | EKS Cluster / Secrets Manager |
 | **9** | **GitHub Deployment Approval Gate** | Production releases should be gated behind human authorization in enterprise environments. | In GitHub Settings, create environment `production` with required reviewers so deployments pause for your approval. | **GitHub Repo Settings > Environments > production** |
 | **10**| **Teardown Sequence Order** | Dynamic NLBs and EBS ENIs created by Kubernetes will deadlock VPC deletion if destroyed out of order. | **Always delete Kubernetes services first** (`kubectl delete -k k8s/overlays/eks`), wait 2–3 minutes, and *then* run `terraform destroy`. | Terminal (`kubectl delete` -> `terraform destroy`) |
@@ -365,7 +371,7 @@ While Terraform, Docker, and GitHub Actions automate over 95% of provisioning, r
 - **Action Required**:
   ```bash
   aws configure
-  # Enter AWS Access Key ID, Secret Access Key, default region (e.g. us-east-1)
+  # Enter AWS Access Key ID, Secret Access Key, default region (ap-southeast-2)
   
   # Verify active account identity
   aws sts get-caller-identity
@@ -374,20 +380,19 @@ While Terraform, Docker, and GitHub Actions automate over 95% of provisioning, r
 
 ---
 
-### 2. Remote State Bootstrap Handshake (Run Once)
-- **Why Manual**: Terraform cannot store state inside an S3 bucket before that bucket actually exists (chicken-and-egg dilemma).
-- **Action Required**:
+### 2. Remote State Bootstrap Handshake *(Optional)*
+- **Why Manual**: Local Terraform state is enabled by default in `terraform/versions.tf` for fast solo setup. If you want shared remote S3 state instead, provision the S3 bucket and DynamoDB lock table first:
   ```bash
   cd terraform/bootstrap
   terraform init
   terraform apply
   ```
-- **Output Handshake**: Note the output `state_bucket_name` (e.g., `taskflow-prod-tfstate-123456789012`). Configure this bucket name into `terraform/backend.hcl` or `terraform/versions.tf`.
+- **Output Handshake**: Note `state_bucket_name` (e.g. `taskflow-prod-tfstate-666952271651`) and uncomment `backend "s3"` in `terraform/versions.tf`.
 
 ---
 
 ### 3. Variable Configuration Handshake (`terraform.tfvars`)
-- **Why Manual**: Real-world identifiers (your personal email, custom region, repository path) must never be hardcoded into public repositories.
+- **Why Manual**: Real-world identifiers (your personal email, region, repository path) must never be hardcoded into public repositories.
 - **Action Required**:
   ```bash
   cd terraform
@@ -395,8 +400,8 @@ While Terraform, Docker, and GitHub Actions automate over 95% of provisioning, r
   ```
 - Edit `terraform.tfvars` with:
   - `budget_alert_email = "your-actual-email@example.com"`
-  - `github_repo = "your-github-username/taskflow-devops"`
-  - `aws_region = "us-east-1"`
+  - `github_repo = "sidharthhhh/taskflow-devops"`
+  - `aws_region = "ap-southeast-2"`
 
 ---
 
@@ -409,17 +414,12 @@ While Terraform, Docker, and GitHub Actions automate over 95% of provisioning, r
 
 ---
 
-### 5. GitHub Actions OIDC Secret Handshake (`AWS_ROLE_ARN`)
-- **Why Manual**: GitHub Actions runs outside AWS and requires permission to assume your newly created IAM role.
+### 5. GitHub Actions Authentication & Docker Hub Secrets Handshake
+- **Why Manual**: GitHub Actions runs outside AWS and Docker Hub and needs credentials to push images and deploy.
 - **Action Required**:
-  1. Retrieve the IAM Role ARN from Terraform output:
-     ```bash
-     terraform output -raw github_actions_role_arn
-     ```
-  2. In your GitHub repository, open **Settings > Secrets and variables > Actions**.
-  3. Click **New repository secret**.
-  4. Name: `AWS_ROLE_ARN`
-  5. Value: Paste the output ARN (e.g., `arn:aws:iam::123456789012:role/taskflow-prod-github-actions-role`).
+  In your GitHub repository, open **Settings > Secrets and variables > Actions**:
+  - **Secrets**: `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`, and either `AWS_ROLE_ARN` (if OIDC is allowed) or `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` (when an AWS Organization SCP blocks OIDC creation).
+  - **Variables**: `AWS_REGION=ap-southeast-2`, `EKS_CLUSTER_NAME=taskflow-prod-cluster`, `DEPLOY_ENABLED=true` (when ready for CD).
 
 ---
 
@@ -427,27 +427,15 @@ While Terraform, Docker, and GitHub Actions automate over 95% of provisioning, r
 - **Why Manual**: Your local machine's `kubectl` CLI does not automatically know where your new cloud cluster lives.
 - **Action Required**:
   ```bash
-  aws eks update-kubeconfig --region us-east-1 --name taskflow-prod-cluster
+  aws eks update-kubeconfig --region ap-southeast-2 --name taskflow-prod-cluster
   kubectl get nodes -o wide
   ```
 
 ---
 
-### 7. AWS Load Balancer Controller Installation Handshake
-- **Why Manual**: The EKS service overlay specifies an AWS Network Load Balancer (`service.beta.kubernetes.io/aws-load-balancer-type: external`). Kubernetes cannot create native AWS NLBs without the controller installed.
-- **Action Required**:
-  ```bash
-  # 1. Associate IAM OIDC Provider with your cluster
-  eksctl utils associate-iam-oidc-provider --cluster taskflow-prod-cluster --approve
-
-  # 2. Install AWS Load Balancer Controller via Helm
-  helm repo add eks https://aws.github.io/eks-charts
-  helm repo update
-  helm install aws-load-balancer-controller eks/aws-load-balancer-controller \
-    -n kube-system \
-    --set clusterName=taskflow-prod-cluster \
-    --set serviceAccount.create=true
-  ```
+### 7. AWS Load Balancer Exposure *(Automatic via In-Tree Controller)*
+- **Note**: `k8s/overlays/eks/frontend-service-patch.yaml` uses EKS's built-in in-tree AWS LoadBalancer integration (`service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"`), so **no extra Helm Load Balancer Controller installation is required**.
+- Simply ensure your VPC public subnets carry the `"kubernetes.io/role/elb" = "1"` tag (already handled by `terraform/modules/vpc`).
 
 ---
 
@@ -551,7 +539,7 @@ This section covers common operational hurdles, real root causes, and verified f
   ```
 - **Root Cause**: If `spring.jpa.database-platform` is hardcoded to `org.hibernate.dialect.H2Dialect` in `application.yml`, Hibernate produces MySQL/H2 DDL syntax that PostgreSQL rejects.
 - **Fix**: 
-  1. Add `@JdbcTypeCode(SqlTypes.VARCHAR)` above enum fields in [Task.java](file:///c:/Users/Sidharth/Desktop/taskflow-devops/app/src/main/java/com/taskflow/model/Task.java):
+  1. Add `@JdbcTypeCode(SqlTypes.VARCHAR)` above enum fields in [Task.java](file:///c:/Users/Sidharth/Desktop/taskflow-devops/services/task-service/src/main/java/com/taskflow/model/Task.java):
      ```java
      @Enumerated(EnumType.STRING)
      @JdbcTypeCode(SqlTypes.VARCHAR)
@@ -574,15 +562,18 @@ This section covers common operational hurdles, real root causes, and verified f
 
 ---
 
-### 6. Inspecting PostgreSQL Database Directly inside K8s
+### 6. Inspecting PostgreSQL Databases (`taskflowdb` & `authdb`) inside K8s
 To debug data persistence or inspect records directly:
 ```bash
 # Open an interactive psql session in the postgres-0 pod
 kubectl exec -it -n taskflow postgres-0 -- psql -U taskflow -d taskflowdb
 
 # Useful psql commands:
-\dt                  # List all tables
+\l                   # List databases (taskflowdb & authdb)
+\dt                  # List tables in taskflowdb
 SELECT * FROM tasks; # View all task rows
+\c authdb            # Switch to authdb
+SELECT email, name, role FROM auth_users;
 \q                   # Exit
 ```
 

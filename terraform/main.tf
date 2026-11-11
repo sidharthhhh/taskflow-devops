@@ -18,12 +18,13 @@ module "vpc" {
 }
 
 # -----------------------------------------------------------------------------
-# 2. ECR Module (Container Registry with Image Scanning & Lifecycle Policies)
+# 2. ECR Repositories (All Polyglot Microservices + Frontend with Scanning)
 # -----------------------------------------------------------------------------
 module "ecr" {
-  source = "./modules/ecr"
+  for_each = toset(var.ecr_repositories)
+  source   = "./modules/ecr"
 
-  repository_name      = var.ecr_repository_name
+  repository_name      = each.value
   image_tag_mutability = var.ecr_image_tag_mutability
   project_name         = var.project_name
   environment          = var.environment

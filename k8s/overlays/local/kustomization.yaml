@@ -5,6 +5,23 @@ namespace: taskflow
 
 resources:
   - ../../base
+  - pv.yaml
+  - pvc.yaml
+  - ingress.yaml
 
 patches:
+  - path: postgres-pvc-patch.yaml
   - path: service-patch.yaml
+  - path: frontend-service-patch.yaml
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: audit-service
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/volumes/0
+        value:
+          name: audit-data
+          persistentVolumeClaim:
+            claimName: audit-pvc

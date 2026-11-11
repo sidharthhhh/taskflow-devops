@@ -1,0 +1,15 @@
+target/
+data/
+.git
+.gitignore
+.dockerignore
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+.env*
+*.log
+*.tmp
+*.md
+*.jsonl
+Dockerfile*
