@@ -63,6 +63,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=task-service
 
       - name: Trivy Vulnerability Scan
+        id: trivy
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: taskflow-task-service:${{ github.sha }}
@@ -72,8 +73,8 @@ jobs:
           ignore-unfixed: true
 
       - name: Upload Trivy SARIF
-        uses: github/codeql-action/upload-sarif@v3
-        if: always()
+        uses: github/codeql-action/upload-sarif@v4
+        if: steps.trivy.outcome == 'success'
         with:
           sarif_file: 'trivy-task-service.sarif'
           category: 'task-service'

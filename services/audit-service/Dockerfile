@@ -1,14 +1,14 @@
 # Stage 1: Build static Rust binary with dependency layer caching
-FROM rust:1.83-alpine AS builder
+FROM rust:alpine AS builder
 WORKDIR /build
 
-RUN apk add --no-cache musl-dev
+RUN apk add --no-cache build-base musl-dev
 
 # Cache Cargo dependencies before copying application code
 COPY Cargo.toml Cargo.lock* ./
-RUN mkdir src && echo "fn main() {}" > src/main.rs && \
+RUN mkdir -p src && echo "fn main() {}" > src/main.rs && \
     cargo build --release && \
-    rm -rf src
+    rm -rf src target/release/deps/audit_service* target/release/audit-service*
 
 COPY src ./src
 RUN touch src/main.rs && cargo build --release
@@ -17,7 +17,8 @@ RUN touch src/main.rs && cargo build --release
 FROM alpine:3.20 AS runner
 WORKDIR /app
 
-RUN addgroup -g 10001 -S appgroup && \
+RUN apk add --no-cache libgcc && \
+    addgroup -g 10001 -S appgroup && \
     adduser -u 10001 -S appuser -G appgroup && \
     mkdir -p /data && \
     chown -R 10001:10001 /app /data

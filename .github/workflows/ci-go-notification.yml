@@ -57,6 +57,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=notification-service
 
       - name: Trivy Vulnerability Scan
+        id: trivy
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: taskflow-notification-service:${{ github.sha }}
@@ -66,8 +67,8 @@ jobs:
           ignore-unfixed: true
 
       - name: Upload Trivy SARIF
-        uses: github/codeql-action/upload-sarif@v3
-        if: always()
+        uses: github/codeql-action/upload-sarif@v4
+        if: steps.trivy.outcome == 'success'
         with:
           sarif_file: 'trivy-notification-service.sarif'
           category: 'notification-service'

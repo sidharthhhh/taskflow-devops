@@ -102,8 +102,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Detect AWS Auth Mode
+        id: aws_auth
+        env:
+          AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        run: |
+          if [ -n "$AWS_ROLE_ARN" ]; then
+            echo "mode=oidc" >> "$GITHUB_OUTPUT"
+          elif [ -n "$AWS_ACCESS_KEY_ID" ]; then
+            echo "mode=keys" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error ::Neither AWS_ROLE_ARN nor AWS_ACCESS_KEY_ID secret is configured."
+            exit 1
+          fi
+
       - name: Configure AWS Credentials (OIDC)
-        if: secrets.AWS_ROLE_ARN != ''
+        if: steps.aws_auth.outputs.mode == 'oidc'
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
@@ -111,7 +126,7 @@ jobs:
           role-session-name: GitHubActions-EKS-Deploy
 
       - name: Configure AWS Credentials (IAM Access Keys Fallback)
-        if: secrets.AWS_ROLE_ARN == '' && secrets.AWS_ACCESS_KEY_ID != ''
+        if: steps.aws_auth.outputs.mode == 'keys'
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
