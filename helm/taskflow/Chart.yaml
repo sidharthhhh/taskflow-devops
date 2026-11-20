@@ -1,0 +1,17 @@
+apiVersion: v2
+name: taskflow
+description: >-
+  TaskFlow polyglot microservices platform (Java task API, Node auth/analytics/scheduler,
+  Go notifications, Rust audit log, Next.js frontend) with PostgreSQL, Redis and a
+  bundled Grafana dashboard for monitoring.
+type: application
+# Chart version - bump when the chart templates change.
+version: 0.1.0
+# App version - informational; the deployed image tag comes from values (image.tag).
+appVersion: "1.0.0"
+keywords:
+  - taskflow
+  - microservices
+  - gitops
+maintainers:
+  - name: sidharthhhh

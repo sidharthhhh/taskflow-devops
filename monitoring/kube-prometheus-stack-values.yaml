@@ -1,0 +1,77 @@
+# =============================================================================
+#  kube-prometheus-stack values (Prometheus Operator + Prometheus + Grafana +
+#  kube-state-metrics), tuned for a small local k3d cluster.
+#
+#  Deployed by ArgoCD: argocd/applications/monitoring.yaml
+#  Goal: exactly ONE Grafana dashboard -> "TaskFlow Microservices"
+#        (shipped by the taskflow Helm chart as a ConfigMap).
+# =============================================================================
+
+# Don't install the ~25 stock Kubernetes dashboards / alert rules - we want a
+# single, focused dashboard for the microservices.
+defaultRules:
+  create: false
+
+alertmanager:
+  enabled: false            # no alert routing needed locally
+
+# node-exporter needs host mounts that Docker Desktop/k3d don't handle well,
+# and node-level metrics aren't part of the microservice dashboard.
+nodeExporter:
+  enabled: false
+
+# k3s bundles these control-plane components into one binary and doesn't expose
+# separate metrics endpoints -> disable to avoid permanently "down" targets.
+kubeControllerManager: { enabled: false }
+kubeScheduler: { enabled: false }
+kubeProxy: { enabled: false }
+kubeEtcd: { enabled: false }
+
+# kube-state-metrics: Deployment/Pod/restart state  (used by the dashboard)
+# kubelet/cAdvisor:   container CPU / memory / network  (used by the dashboard)
+kubeStateMetrics:
+  enabled: true
+kubelet:
+  enabled: true
+
+prometheus:
+  service:
+    type: NodePort
+    nodePort: 30090         # http://localhost:30090
+  prometheusSpec:
+    retention: 2d
+    scrapeInterval: 15s
+    # Pick up ServiceMonitors/PodMonitors from ANY namespace and with ANY labels
+    # (by default only those labelled with this Helm release are selected).
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { memory: 768Mi }
+
+grafana:
+  enabled: true
+  defaultDashboardsEnabled: false   # <- only our TaskFlow dashboard shows up
+  adminUser: admin
+  adminPassword: taskflow-admin     # local dev only
+  service:
+    type: NodePort
+    nodePort: 30300         # http://localhost:30300
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard      # ConfigMaps with grafana_dashboard=1 ...
+      labelValue: "1"
+      searchNamespace: ALL          # ... in any namespace get imported
+      folderAnnotation: grafana_folder
+      provider:
+        foldersFromFilesStructure: true
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { memory: 256Mi }
+
+prometheusOperator:
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { memory: 256Mi }

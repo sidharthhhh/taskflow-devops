@@ -1,0 +1,50 @@
+# =============================================================================
+#  ArgoCD Application: TaskFlow microservices (Helm chart helm/taskflow)
+#
+#  Argo CD watches the `microservice` branch. Every commit that changes
+#  helm/taskflow/** (for example CI bumping image.tag) is rendered with
+#  `helm template` and applied to the cluster automatically.
+#
+#  NOTE: scripts/local-up.sh rewrites repoURL to the in-cluster git server
+#        (http://git-server.gitops.svc.cluster.local:8765/taskflow-devops.git) so this works
+#        without pushing to GitHub.
+# =============================================================================
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: taskflow
+  namespace: argocd
+  # Deleting the Application also deletes the resources it created.
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: taskflow
+  source:
+    repoURL: https://github.com/sidharthhhh/taskflow-devops.git
+    targetRevision: microservice          # <- branch to track
+    path: helm/taskflow
+    helm:
+      releaseName: taskflow
+      valueFiles:
+        - values.yaml
+        - values-local.yaml               # swap for values-eks.yaml etc. per environment
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: taskflow
+  syncPolicy:
+    automated:
+      prune: true        # delete resources removed from git
+      selfHeal: true     # revert manual `kubectl edit` drift back to git state
+    syncOptions:
+      - CreateNamespace=true
+      - ApplyOutOfSyncOnly=true
+    retry:
+      limit: 5
+      backoff: { duration: 10s, factor: 2, maxDuration: 3m }
+  # The HPA owns replicas of taskflow-app - don't treat that as drift.
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      name: taskflow-app
+      jsonPointers:
+        - /spec/replicas

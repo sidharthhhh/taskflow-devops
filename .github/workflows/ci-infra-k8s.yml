@@ -2,17 +2,23 @@ name: CI - Terraform, Kubernetes & Docker Compose
 
 on:
   push:
-    branches: [microservice, sidharth/feature, main, master]
+    branches: [microservice]
     paths:
       - 'terraform/**'
       - 'k8s/**'
+      - 'helm/**'
+      - 'argocd/**'
+      - 'monitoring/**'
       - 'docker-compose.yml'
       - '.github/workflows/ci-infra-k8s.yml'
   pull_request:
-    branches: [microservice, sidharth/feature, main, master]
+    branches: [microservice]
     paths:
       - 'terraform/**'
       - 'k8s/**'
+      - 'helm/**'
+      - 'argocd/**'
+      - 'monitoring/**'
       - 'docker-compose.yml'
       - '.github/workflows/ci-infra-k8s.yml'
   workflow_dispatch:
@@ -64,3 +70,40 @@ jobs:
 
       - name: Validate EKS Kustomize Overlay
         run: kubectl kustomize k8s/overlays/eks > /dev/null
+
+  # ---------------------------------------------------------------------------
+  # Helm + ArgoCD validation: the chart ArgoCD deploys must lint, render, and
+  # produce schema-valid Kubernetes objects before it can land on `microservice`.
+  # ---------------------------------------------------------------------------
+  validate-helm-argocd:
+    name: Helm Lint, Render & Schema Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.16.4
+
+      - name: Helm Lint (default + local values)
+        run: |
+          helm lint helm/taskflow
+          helm lint helm/taskflow -f helm/taskflow/values.yaml -f helm/taskflow/values-local.yaml
+
+      - name: Validate Grafana dashboard JSON
+        run: python3 -m json.tool helm/taskflow/dashboards/taskflow-microservices.json > /dev/null
+
+      - name: Render chart
+        run: |
+          helm template taskflow helm/taskflow -n taskflow \
+            -f helm/taskflow/values.yaml -f helm/taskflow/values-local.yaml > rendered.yaml
+          echo "Rendered $(grep -c '^kind:' rendered.yaml) Kubernetes objects"
+
+      - name: Kubeconform schema validation (chart + ArgoCD manifests)
+        run: |
+          curl -sSfL https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz | tar -xz
+          CRDS='https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
+          ./kubeconform -strict -summary -schema-location default -schema-location "$CRDS" rendered.yaml
+          ./kubeconform -strict -summary -schema-location default -schema-location "$CRDS" \
+            argocd/project.yaml argocd/applications/ argocd/local-git-server/

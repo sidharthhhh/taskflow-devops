@@ -1,0 +1,27 @@
+# =============================================================================
+#  Argo CD installation values (Helm chart argo/argo-cd 10.18.2 -> Argo CD v3.6.2)
+#
+#  Install:  helm upgrade --install argocd argo/argo-cd --version 10.18.2 \
+#              -n argocd --create-namespace -f argocd/install/argocd-values.yaml
+#  UI:       http://localhost:30880   user: admin
+#  Password: kubectl -n argocd get secret argocd-initial-admin-secret \
+#              -o jsonpath="{.data.password}" | base64 -d
+# =============================================================================
+
+configs:
+  params:
+    server.insecure: true          # serve plain HTTP locally (no TLS cert needed)
+  cm:
+    timeout.reconciliation: 60s    # how often Argo CD polls git for new commits (default 180s)
+
+server:
+  service:
+    type: NodePort
+    nodePortHttp: 30880            # mapped to localhost:30880 by k3d
+    nodePortHttps: 30881
+
+# Not needed for a local single-user setup -> save RAM.
+dex:
+  enabled: false                   # SSO
+notifications:
+  enabled: false                   # Slack/email notifications

@@ -2,12 +2,12 @@ name: CI - Java Task Service
 
 on:
   push:
-    branches: [microservice, sidharth/feature, main, master]
+    branches: [microservice]
     paths:
       - 'services/task-service/**'
       - '.github/workflows/ci-task-service.yml'
   pull_request:
-    branches: [microservice, sidharth/feature, main, master]
+    branches: [microservice]
     paths:
       - 'services/task-service/**'
       - '.github/workflows/ci-task-service.yml'

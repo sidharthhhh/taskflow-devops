@@ -1,0 +1,43 @@
+# =============================================================================
+#  ArgoCD Application: monitoring (kube-prometheus-stack = Prometheus + Grafana)
+#
+#  Multi-source Application:
+#    source 1 -> the upstream Helm chart from the prometheus-community repo
+#    source 2 -> THIS git repo, referenced as `$values`, so our values file
+#                (monitoring/kube-prometheus-stack-values.yaml) is version-controlled.
+# =============================================================================
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: monitoring
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: taskflow
+  sources:
+    - repoURL: https://prometheus-community.github.io/helm-charts
+      chart: kube-prometheus-stack
+      targetRevision: 93.4.1
+      helm:
+        releaseName: monitoring
+        valueFiles:
+          - $values/monitoring/kube-prometheus-stack-values.yaml
+    - repoURL: https://github.com/sidharthhhh/taskflow-devops.git
+      targetRevision: microservice
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      # Prometheus Operator CRDs are too large for client-side apply's
+      # last-applied annotation (262144 bytes) -> use server-side apply.
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff: { duration: 10s, factor: 2, maxDuration: 3m }

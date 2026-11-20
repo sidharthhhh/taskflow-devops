@@ -1,0 +1,22 @@
+# AppProject = a security boundary for Applications:
+# which git repos they may pull from, and which clusters/namespaces they may deploy to.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: taskflow
+  namespace: argocd
+spec:
+  description: TaskFlow microservices + monitoring
+  sourceRepos:
+    - https://github.com/sidharthhhh/taskflow-devops.git          # the real repo
+    - http://git-server.gitops.svc.cluster.local:8765/taskflow-devops.git  # in-cluster local git server (argocd/local-git-server/)
+    - https://prometheus-community.github.io/helm-charts          # kube-prometheus-stack chart
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: taskflow
+    - server: https://kubernetes.default.svc
+      namespace: monitoring
+  # Cluster-scoped kinds the apps are allowed to create (CRDs, RBAC, namespaces, webhooks...).
+  clusterResourceWhitelist:
+    - group: "*"
+      kind: "*"

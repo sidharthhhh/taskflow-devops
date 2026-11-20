@@ -1,0 +1,34 @@
+{{- /*
+  ConfigMaps + Secret shared by the microservices.
+  Pods carry a checksum of this file (see microservices.yaml) so that changing a
+  value here triggers a rolling restart automatically.
+*/ -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: taskflow-config
+  labels:
+    {{- include "taskflow.labels" . | nindent 4 }}
+data:
+  {{- toYaml .Values.taskConfig | nindent 2 }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: taskflow-mesh-config
+  labels:
+    {{- include "taskflow.labels" . | nindent 4 }}
+data:
+  {{- toYaml .Values.meshConfig | nindent 2 }}
+{{- if .Values.secret.create }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: taskflow-secret
+  labels:
+    {{- include "taskflow.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  {{- toYaml .Values.secret.data | nindent 2 }}
+{{- end }}

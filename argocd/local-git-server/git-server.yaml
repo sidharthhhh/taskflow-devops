@@ -1,0 +1,81 @@
+# =============================================================================
+#  In-cluster Git server (LOCAL DEMO ONLY - stands in for GitHub)
+#
+#  ArgoCD pulls from:   http://git-server.gitops.svc.cluster.local:8765/taskflow-devops.git
+#  You push to it via:  kubectl -n gitops port-forward svc/git-server 8765:8765
+#                       git push local-gitops microservice
+#
+#  The server code is scripts/local-git-server.py, mounted from a ConfigMap
+#  (created by scripts/local-up.sh). Repo data lives on a PVC so it survives
+#  pod restarts.
+# =============================================================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gitops
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: git-data
+  namespace: gitops
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 256Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: git-server
+  namespace: gitops
+  labels: { app: git-server }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app: git-server }
+  template:
+    metadata:
+      labels: { app: git-server }
+    spec:
+      containers:
+        - name: git-server
+          image: python:3.12-alpine
+          command: ["sh", "-c"]
+          args:
+            - |
+              set -e
+              apk add --no-cache git >/dev/null
+              REPO=/srv/git/taskflow-devops.git
+              [ -d "$REPO" ] || git init --bare -b microservice "$REPO"
+              git config --global --add safe.directory '*'
+              git -C "$REPO" config http.receivepack true
+              exec python /app/local-git-server.py --repo "$REPO" --bind 0.0.0.0 --port 8765 --allow-push
+          ports:
+            - { containerPort: 8765, name: http }
+          readinessProbe:
+            tcpSocket: { port: 8765 }
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { memory: 128Mi }
+          volumeMounts:
+            - { name: app, mountPath: /app }
+            - { name: data, mountPath: /srv/git }
+      volumes:
+        - name: app
+          configMap: { name: git-server-script }
+        - name: data
+          persistentVolumeClaim: { claimName: git-data }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: git-server
+  namespace: gitops
+spec:
+  selector: { app: git-server }
+  ports:
+    - { port: 8765, targetPort: 8765, name: http }

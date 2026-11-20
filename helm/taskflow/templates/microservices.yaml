@@ -1,0 +1,186 @@
+{{- /*
+  ONE template renders ALL microservices.
+  It loops over `.Values.services` and, for each enabled entry, emits:
+    Deployment  -> always
+    Service     -> always
+    PVC         -> if data.persistence.enabled
+    HPA         -> if autoscaling.enabled
+    PDB         -> if pdb.enabled
+  (ServiceMonitors live in servicemonitor.yaml.)
+*/ -}}
+{{- $configChecksum := include (print $.Template.BasePath "/config.yaml") $ | sha256sum }}
+{{- range $key, $svc := .Values.services }}
+{{- if $svc.enabled }}
+{{- $svcName := $svc.serviceName | default $svc.name }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $svc.name }}
+  labels:
+    app: {{ $svc.name }}
+    app.kubernetes.io/name: {{ $svc.name }}
+    app.kubernetes.io/component: {{ $key }}
+    {{- include "taskflow.labels" $ | nindent 4 }}
+spec:
+  {{- /* With an HPA, the HPA owns .spec.replicas - leave it unset so ArgoCD doesn't fight it. */}}
+  {{- if not (and $svc.autoscaling $svc.autoscaling.enabled) }}
+  replicas: {{ $svc.replicas | default 1 }}
+  {{- end }}
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app: {{ $svc.name }}
+  template:
+    metadata:
+      labels:
+        app: {{ $svc.name }}
+        app.kubernetes.io/name: {{ $svc.name }}
+        app.kubernetes.io/part-of: taskflow
+      annotations:
+        checksum/config: {{ $configChecksum }}
+    spec:
+      {{- with $svc.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if $svc.waitForPostgres }}
+      initContainers:
+        - name: wait-for-postgres
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - until nc -z -w 2 postgres-service 5432; do echo "Waiting for PostgreSQL..."; sleep 2; done; echo "PostgreSQL is reachable!"
+      {{- end }}
+      containers:
+        - name: {{ $svc.name }}
+          image: {{ include "taskflow.image" (dict "root" $ "svc" $svc) }}
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          ports:
+            - containerPort: {{ $svc.port }}
+              name: http
+          env:
+            - name: PORT
+              value: {{ $svc.port | quote }}
+            {{- with $svc.env }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- with $svc.envFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml $svc.resources | nindent 12 }}
+          {{- if $svc.health.startup }}
+          startupProbe:
+            httpGet: { path: {{ $svc.health.liveness }}, port: {{ $svc.port }} }
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 30
+          {{- end }}
+          readinessProbe:
+            httpGet: { path: {{ $svc.health.readiness }}, port: {{ $svc.port }} }
+            initialDelaySeconds: {{ ternary 0 5 (default false $svc.health.startup) }}
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet: { path: {{ $svc.health.liveness }}, port: {{ $svc.port }} }
+            initialDelaySeconds: {{ ternary 0 10 (default false $svc.health.startup) }}
+            periodSeconds: 15
+            timeoutSeconds: 3
+          {{- with $svc.data }}
+          volumeMounts:
+            - name: data
+              mountPath: {{ .mountPath }}
+          {{- end }}
+      {{- with $svc.data }}
+      volumes:
+        - name: data
+          {{- if .persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ $svc.name }}-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+      {{- end }}
+      terminationGracePeriodSeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $svcName }}
+  labels:
+    app: {{ $svc.name }}
+    {{- include "taskflow.labels" $ | nindent 4 }}
+spec:
+  {{- $svcType := (($svc.service).type) | default "ClusterIP" }}
+  type: {{ $svcType }}
+  ports:
+    - port: {{ $svc.port }}
+      targetPort: {{ $svc.port }}
+      name: http
+      {{- if and (eq $svcType "NodePort") (($svc.service).nodePort) }}
+      nodePort: {{ $svc.service.nodePort }}
+      {{- end }}
+  selector:
+    app: {{ $svc.name }}
+{{- if and $svc.data $svc.data.persistence.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $svc.name }}-data
+  labels:
+    app: {{ $svc.name }}
+    {{- include "taskflow.labels" $ | nindent 4 }}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  {{- with $svc.data.persistence.storageClass }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ $svc.data.persistence.size }}
+{{- end }}
+{{- if and $svc.autoscaling $svc.autoscaling.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ $svc.name }}-hpa
+  labels:
+    app: {{ $svc.name }}
+    {{- include "taskflow.labels" $ | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ $svc.name }}
+  minReplicas: {{ $svc.autoscaling.minReplicas }}
+  maxReplicas: {{ $svc.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ $svc.autoscaling.targetCPU }}
+{{- end }}
+{{- if and $svc.pdb $svc.pdb.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ $svc.name }}-pdb
+  labels:
+    app: {{ $svc.name }}
+    {{- include "taskflow.labels" $ | nindent 4 }}
+spec:
+  minAvailable: {{ $svc.pdb.minAvailable }}
+  selector:
+    matchLabels:
+      app: {{ $svc.name }}
+{{- end }}
+{{- end }}
+{{- end }}

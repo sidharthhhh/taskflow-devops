@@ -1,57 +1,52 @@
-name: CD - Build, Push Docker Hub & Deploy to EKS
+# =============================================================================
+#  CD - GitOps: build & push images, then bump the Helm image tag in git.
+#
+#  Flow (only the `microservice` branch):
+#    1. push to microservice  ->  build all 7 images, push to Docker Hub as :<git-sha>
+#    2. rewrite helm/taskflow/values.yaml  image.tag: <git-sha>  and commit it back
+#    3. ArgoCD (watching the microservice branch) sees the new commit and rolls
+#       the cluster forward. No kubectl / cluster credentials in CI at all.
+#
+#  Rollback = `git revert` the "deploy: bump image tag" commit (ArgoCD syncs it).
+# =============================================================================
+name: CD - Build Images & GitOps Deploy (ArgoCD)
 
 on:
   push:
-    branches: [microservice, main]
-    paths-ignore:
-      - '**.md'
-      - '.gitignore'
+    branches: [microservice]
+    paths:
+      - 'services/**'
+      - 'frontend/**'
+      - '.github/workflows/cd-deploy.yml'
   workflow_dispatch:
-    inputs:
-      push_to_dockerhub:
-        description: 'Build and push all 7 service images to Docker Hub'
-        required: true
-        type: boolean
-        default: true
-      deploy_to_eks:
-        description: 'Deploy updated Kustomize stack to AWS EKS (ap-southeast-2)'
-        required: true
-        type: boolean
-        default: false
+
+# Never run two tag bumps at the same time (they would race on the same commit).
+concurrency:
+  group: cd-microservice
+  cancel-in-progress: false
 
 permissions:
-  id-token: write
-  contents: read
-
-env:
-  AWS_REGION: ${{ vars.AWS_REGION || 'ap-southeast-2' }}
-  EKS_CLUSTER_NAME: ${{ vars.EKS_CLUSTER_NAME || 'taskflow-prod-cluster' }}
+  contents: write     # needed to commit the tag bump back to the branch
 
 jobs:
   push-images:
     name: Build & Push (${{ matrix.svc.image }})
     runs-on: ubuntu-latest
-    if: |
-      (github.event_name == 'workflow_dispatch' && inputs.push_to_dockerhub == true) ||
-      (github.event_name == 'push' && vars.DEPLOY_ENABLED == 'true')
+    # The tag-bump commit itself must not trigger another build loop.
+    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    outputs:
+      pushed: ${{ steps.check_dockerhub.outputs.configured }}
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
         svc:
-          - context: ./services/task-service
-            image: taskflow-app
-          - context: ./services/auth-service
-            image: taskflow-auth-service
-          - context: ./services/analytics-service
-            image: taskflow-analytics-service
-          - context: ./services/scheduler-service
-            image: taskflow-scheduler-service
-          - context: ./services/notification-service
-            image: taskflow-notification-service
-          - context: ./services/audit-service
-            image: taskflow-audit-service
-          - context: ./frontend
-            image: taskflow-frontend
+          - { context: ./services/task-service,         image: taskflow-app }
+          - { context: ./services/auth-service,         image: taskflow-auth-service }
+          - { context: ./services/analytics-service,    image: taskflow-analytics-service }
+          - { context: ./services/scheduler-service,    image: taskflow-scheduler-service }
+          - { context: ./services/notification-service, image: taskflow-notification-service }
+          - { context: ./services/audit-service,        image: taskflow-audit-service }
+          - { context: ./frontend,                      image: taskflow-frontend }
     steps:
       - uses: actions/checkout@v4
 
@@ -90,90 +85,41 @@ jobs:
           cache-from: type=gha,scope=cd-${{ matrix.svc.image }}
           cache-to: type=gha,mode=max,scope=cd-${{ matrix.svc.image }}
 
-  deploy-to-eks:
-    name: Deploy Stack to Amazon EKS
+  gitops-bump-tag:
+    name: GitOps - bump Helm image tag
     runs-on: ubuntu-latest
     needs: [push-images]
-    if: |
-      !failure() && !cancelled() && (
-        (github.event_name == 'workflow_dispatch' && inputs.deploy_to_eks == true) ||
-        (github.event_name == 'push' && vars.DEPLOY_ENABLED == 'true')
-      )
+    # Only bump the tag if images were actually pushed (otherwise ArgoCD would
+    # try to deploy a tag that doesn't exist).
+    if: needs.push-images.outputs.pushed == 'true'
     steps:
       - uses: actions/checkout@v4
-
-      - name: Detect AWS Auth Mode
-        id: aws_auth
-        env:
-          AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        run: |
-          if [ -n "$AWS_ROLE_ARN" ]; then
-            echo "mode=oidc" >> "$GITHUB_OUTPUT"
-          elif [ -n "$AWS_ACCESS_KEY_ID" ]; then
-            echo "mode=keys" >> "$GITHUB_OUTPUT"
-          else
-            echo "::error ::Neither AWS_ROLE_ARN nor AWS_ACCESS_KEY_ID secret is configured."
-            exit 1
-          fi
-
-      - name: Configure AWS Credentials (OIDC)
-        if: steps.aws_auth.outputs.mode == 'oidc'
-        uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
-          role-session-name: GitHubActions-EKS-Deploy
+          ref: microservice
 
-      - name: Configure AWS Credentials (IAM Access Keys Fallback)
-        if: steps.aws_auth.outputs.mode == 'keys'
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Update Kubeconfig for EKS
-        run: aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.EKS_CLUSTER_NAME }}
-
-      - name: Set up Kubectl
-        uses: azure/setup-kubectl@v4
-
-      - name: Install Kustomize CLI
+      - name: Update image.tag in helm/taskflow/values.yaml
         run: |
-          if ! command -v kustomize >/dev/null 2>&1; then
-            curl -sSfL "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.4.3/kustomize_v5.4.3_linux_amd64.tar.gz" | tar -xz -C /tmp
-            sudo mv /tmp/kustomize /usr/local/bin/kustomize
+          SHA="${{ github.sha }}"
+          # yq edits YAML structurally (keeps comments) - preinstalled on GitHub runners
+          yq -i ".image.tag = \"${SHA}\"" helm/taskflow/values.yaml
+          yq -i ".image.registry = \"docker.io/${{ secrets.DOCKERHUB_USERNAME }}\"" helm/taskflow/values.yaml
+          git diff --stat
+
+      - name: Commit & push tag bump
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add helm/taskflow/values.yaml
+          if git diff --cached --quiet; then
+            echo "Tag already up to date."; exit 0
           fi
-          kustomize version
+          git commit -m "deploy: bump image tag to ${GITHUB_SHA::7} [skip ci]"
+          git push origin HEAD:microservice
 
-      - name: Inject Image Tags & Apply Kustomize Overlay
+      - name: Summary
         run: |
-          DOCKER_USER="${{ secrets.DOCKERHUB_USERNAME || 'sidharthhhh' }}"
-          IMAGE_TAG="${{ needs.push-images.result == 'success' && github.sha || 'latest' }}"
-          cd k8s/overlays/eks
-          kustomize edit set image \
-            taskflow-app="${DOCKER_USER}/taskflow-app:${IMAGE_TAG}" \
-            taskflow-auth-service="${DOCKER_USER}/taskflow-auth-service:${IMAGE_TAG}" \
-            taskflow-analytics-service="${DOCKER_USER}/taskflow-analytics-service:${IMAGE_TAG}" \
-            taskflow-scheduler-service="${DOCKER_USER}/taskflow-scheduler-service:${IMAGE_TAG}" \
-            taskflow-notification-service="${DOCKER_USER}/taskflow-notification-service:${IMAGE_TAG}" \
-            taskflow-audit-service="${DOCKER_USER}/taskflow-audit-service:${IMAGE_TAG}" \
-            taskflow-frontend="${DOCKER_USER}/taskflow-frontend:${IMAGE_TAG}"
-          kubectl apply -k .
-
-      - name: Verify Rollouts
-        run: |
-          kubectl rollout status statefulset/postgres -n taskflow --timeout=180s || true
-          kubectl rollout status deployment/redis -n taskflow --timeout=120s || true
-          for deploy in taskflow-app auth-service analytics-service scheduler-service notification-service audit-service taskflow-frontend; do
-            kubectl rollout status "deployment/${deploy}" -n taskflow --timeout=180s
-          done
-          kubectl get pods,svc,pv,pvc -n taskflow -o wide
-
-      - name: Rollback Task & Frontend on Failure
-        if: failure()
-        run: |
-          kubectl rollout undo deployment/taskflow-app -n taskflow || true
-          kubectl rollout undo deployment/taskflow-frontend -n taskflow || true
-
+          {
+            echo "### GitOps deploy queued"
+            echo "Image tag \`${{ github.sha }}\` committed to \`helm/taskflow/values.yaml\`."
+            echo "ArgoCD (Application \`taskflow\`) will sync it within ~1 minute."
+          } >> "$GITHUB_STEP_SUMMARY"

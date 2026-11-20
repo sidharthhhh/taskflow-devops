@@ -1,0 +1,22 @@
+# =============================================================================
+#  LOCAL overrides (k3d cluster "taskflow") - layered on top of values.yaml
+#
+#  - Images are built locally and loaded with `k3d image import`, so there is no
+#    registry prefix and Kubernetes must never try to pull them.
+#  - NodePorts are mapped to localhost by k3d (see scripts/local-up.sh):
+#        http://localhost:30088  -> frontend
+#        http://localhost:30080  -> task API (Swagger: /swagger-ui.html)
+# =============================================================================
+image:
+  registry: ""          # bare names: taskflow-app:latest, taskflow-auth-service:latest, ...
+  tag: latest
+  pullPolicy: Never     # images come from `k3d image import`, never from a registry
+
+services:
+  task:
+    service: { type: NodePort, nodePort: 30080 }
+  frontend:
+    service: { type: NodePort, nodePort: 30088 }
+  audit:
+    data:
+      persistence: { enabled: true }   # k3s ships the local-path StorageClass

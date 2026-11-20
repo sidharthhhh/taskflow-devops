@@ -1,0 +1,15 @@
+TaskFlow {{ .Chart.AppVersion }} deployed to namespace "{{ .Release.Namespace }}" (image tag: {{ .Values.image.tag }})
+
+Services:
+{{- range $key, $svc := .Values.services }}
+{{- if $svc.enabled }}
+  - {{ $svc.name }} -> svc/{{ $svc.serviceName | default $svc.name }}:{{ $svc.port }}{{ if ($svc.service).nodePort }}  (http://localhost:{{ $svc.service.nodePort }}){{ end }}
+{{- end }}
+{{- end }}
+
+Check rollout:
+  kubectl get pods -n {{ .Release.Namespace }}
+
+{{- if .Values.monitoring.dashboard.enabled }}
+Grafana dashboard "TaskFlow Microservices" is shipped as ConfigMap taskflow-grafana-dashboard.
+{{- end }}

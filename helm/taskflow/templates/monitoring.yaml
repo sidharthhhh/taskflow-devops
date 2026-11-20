@@ -1,0 +1,50 @@
+{{- /*
+  Monitoring glue for kube-prometheus-stack:
+   1. ServiceMonitor per service with metrics.enabled  -> Prometheus scrapes it.
+   2. ConfigMap holding the single Grafana dashboard   -> Grafana sidecar imports it.
+  The dashboard JSON lives in helm/taskflow/dashboards/ so it can be edited in Grafana,
+  exported, and committed back (GitOps for dashboards too).
+*/ -}}
+{{- if .Values.monitoring.serviceMonitor.enabled }}
+{{- range $key, $svc := .Values.services }}
+{{- if and $svc.enabled $svc.metrics $svc.metrics.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ $svc.name }}
+  labels:
+    app: {{ $svc.name }}
+    {{- include "taskflow.labels" $ | nindent 4 }}
+    {{- toYaml $.Values.monitoring.serviceMonitor.labels | nindent 4 }}
+  annotations:
+    # Lets ArgoCD sync even if the CRD isn't installed yet (monitoring app syncs in parallel).
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  selector:
+    matchLabels:
+      app: {{ $svc.name }}
+  namespaceSelector:
+    matchNames: [{{ $.Release.Namespace }}]
+  endpoints:
+    - port: http
+      path: {{ $svc.metrics.path }}
+      interval: {{ $.Values.monitoring.serviceMonitor.interval }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- if .Values.monitoring.dashboard.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: taskflow-grafana-dashboard
+  labels:
+    grafana_dashboard: "1"          # <- the Grafana sidecar watches for this label
+    {{- include "taskflow.labels" . | nindent 4 }}
+  annotations:
+    grafana_folder: {{ .Values.monitoring.dashboard.folder | quote }}
+data:
+  taskflow-microservices.json: |-
+    {{- .Files.Get "dashboards/taskflow-microservices.json" | nindent 4 }}
+{{- end }}
