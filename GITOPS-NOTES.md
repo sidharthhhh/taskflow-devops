@@ -255,10 +255,16 @@ k3d cluster delete taskflow
 
 ---
 
-## 6. CI/CD — `microservice` branch only
+## 6. CI/CD — `microservice` and `main` branches
 
-All workflows in `.github/workflows/` now trigger **only** on `microservice`
-(push + pull_request). `main`, `master` and `sidharth/feature` no longer trigger anything.
+All workflows in `.github/workflows/` trigger on `microservice` **and** `main`
+(push + pull_request). `master` and `sidharth/feature` do not trigger anything.
+
+> **Which branch does ArgoCD deploy?** The one in its Application's `targetRevision`
+> (currently `microservice`, see `argocd/applications/*.yaml`). CD commits the image-tag bump
+> to the branch that triggered the run, so a push to `main` only reaches the cluster if ArgoCD
+> tracks `main`. Both branches bump the same `values.yaml` lines, so keep them in sync by
+> merging (a tag-bump conflict is resolved by taking the newer tag).
 
 | Workflow               | Trigger paths                                    | What it does |
 |------------------------|--------------------------------------------------|--------------|

@@ -2,14 +2,14 @@ name: CI - Node.js Microservices
 
 on:
   push:
-    branches: [microservice]
+    branches: [microservice, main]
     paths:
       - 'services/auth-service/**'
       - 'services/analytics-service/**'
       - 'services/scheduler-service/**'
       - '.github/workflows/ci-node-services.yml'
   pull_request:
-    branches: [microservice]
+    branches: [microservice, main]
     paths:
       - 'services/auth-service/**'
       - 'services/analytics-service/**'

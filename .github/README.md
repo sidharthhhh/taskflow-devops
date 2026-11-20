@@ -1,6 +1,6 @@
 # 🚀 TaskFlow CI/CD Pipelines (GitHub Actions)
 
-This directory contains **7 modular, path-filtered CI/CD workflows** that run **only on the `microservice` branch** (push + pull_request), supporting polyglot microservices (Java, Node.js, Golang, Rust, Next.js), Docker Hub, Helm and ArgoCD GitOps deployment.
+This directory contains **7 modular, path-filtered CI/CD workflows** that run **on the `microservice` and `main` branches** (push + pull_request), supporting polyglot microservices (Java, Node.js, Golang, Rust, Next.js), Docker Hub, Helm and ArgoCD GitOps deployment.
 
 ---
 
@@ -44,7 +44,7 @@ Navigate to **GitHub Repository > Settings > Secrets and variables > Actions**:
 
 ## 🛡️ Built-in Safety & Rollback
 
-1. **Branch & Path Isolation**: Only pushes and pull requests targeting `microservice` run CI, and each workflow runs only when its own paths change.
+1. **Branch & Path Isolation**: Only pushes and pull requests targeting `microservice` or `main` run CI, and each workflow runs only when its own paths change.
 2. **GitOps CD**: `cd-deploy.yml` never touches the cluster. It only writes the image tag to git, and ArgoCD (running in the cluster) applies it. The tag bump is skipped if Docker Hub secrets are missing, so ArgoCD is never pointed at an image that doesn't exist. `concurrency` serialises deploys.
 3. **Rollback = `git revert`**: revert the `deploy: bump image tag ... [skip ci]` commit and ArgoCD syncs back to the previous images. Or use `argocd app rollback taskflow <ID>`. ArgoCD `selfHeal` also reverts manual drift.
 

@@ -2,12 +2,12 @@ name: CI - Next.js Frontend
 
 on:
   push:
-    branches: [microservice]
+    branches: [microservice, main]
     paths:
       - 'frontend/**'
       - '.github/workflows/ci-frontend.yml'
   pull_request:
-    branches: [microservice]
+    branches: [microservice, main]
     paths:
       - 'frontend/**'
       - '.github/workflows/ci-frontend.yml'

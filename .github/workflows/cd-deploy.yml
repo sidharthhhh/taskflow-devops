@@ -1,11 +1,12 @@
 # =============================================================================
 #  CD - GitOps: build & push images, then bump the Helm image tag in git.
 #
-#  Flow (only the `microservice` branch):
-#    1. push to microservice  ->  build all 7 images, push to Docker Hub as :<git-sha>
+#  Flow (branches: microservice and main):
+#    1. push to microservice/main  ->  build all 7 images, push to Docker Hub as :<git-sha>
 #    2. rewrite helm/taskflow/values.yaml  image.tag: <git-sha>  and commit it back
-#    3. ArgoCD (watching the microservice branch) sees the new commit and rolls
-#       the cluster forward. No kubectl / cluster credentials in CI at all.
+#       to the SAME branch that triggered the run (github.ref_name)
+#    3. ArgoCD (its Application's targetRevision = the branch it watches) sees the
+#       new commit and rolls the cluster forward. No kubectl / cluster credentials in CI.
 #
 #  Rollback = `git revert` the "deploy: bump image tag" commit (ArgoCD syncs it).
 # =============================================================================
@@ -13,7 +14,7 @@ name: CD - Build Images & GitOps Deploy (ArgoCD)
 
 on:
   push:
-    branches: [microservice]
+    branches: [microservice, main]
     paths:
       - 'services/**'
       - 'frontend/**'
@@ -22,7 +23,7 @@ on:
 
 # Never run two tag bumps at the same time (they would race on the same commit).
 concurrency:
-  group: cd-microservice
+  group: cd-${{ github.ref_name }}
   cancel-in-progress: false
 
 permissions:
@@ -95,7 +96,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: microservice
+          ref: ${{ github.ref_name }}
 
       - name: Update image.tag in helm/taskflow/values.yaml
         run: |
@@ -119,7 +120,7 @@ jobs:
             echo "Tag already up to date."; exit 0
           fi
           git commit -m "deploy: bump image tag to ${GITHUB_SHA::7} [skip ci]"
-          git push origin HEAD:microservice
+          git push origin HEAD:${{ github.ref_name }}
 
       - name: Summary
         run: |

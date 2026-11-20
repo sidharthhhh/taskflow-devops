@@ -34,7 +34,7 @@ TaskFlow is a production-ready DevOps platform combining a **Java 17 / Spring Bo
   - Horizontal Pod Autoscaler (HPA) & Pod Disruption Budget (PDB)
 - **Helm + ArgoCD GitOps**: one Helm chart (`helm/taskflow`) renders all services from `values.yaml`; ArgoCD auto-syncs the `microservice` branch with prune + self-heal
 - **Monitoring**: kube-prometheus-stack (Prometheus Operator, kube-state-metrics, Grafana) with a single **TaskFlow Microservices** dashboard shipped as code
-- **CI/CD on `microservice` only**: per-service CI with Trivy scans, Helm lint/kubeconform, and GitOps CD that bumps the image tag in git for ArgoCD to deploy
+- **CI/CD on `microservice` and `main`**: per-service CI with Trivy scans, Helm lint/kubeconform, and GitOps CD that bumps the image tag in git for ArgoCD to deploy
 
 ---
 
