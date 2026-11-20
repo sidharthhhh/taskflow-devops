@@ -5,9 +5,6 @@
 #  helm/taskflow/** (for example CI bumping image.tag) is rendered with
 #  `helm template` and applied to the cluster automatically.
 #
-#  NOTE: scripts/local-up.sh rewrites repoURL to the in-cluster git server
-#        (http://git-server.gitops.svc.cluster.local:8765/taskflow-devops.git) so this works
-#        without pushing to GitHub.
 # =============================================================================
 apiVersion: argoproj.io/v1alpha1
 kind: Application

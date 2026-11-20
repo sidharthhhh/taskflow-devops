@@ -54,21 +54,18 @@ taskflow-devops/
 │       └── cd-deploy.yml                        # Docker Hub push + GitOps image-tag bump (ArgoCD deploys)
 ├── helm/taskflow/                               # Helm chart for the whole stack
 │   ├── values.yaml                              # Defaults (cloud); CI bumps image.tag here
-│   ├── values-local.yaml                        # k3d overrides (local images, NodePorts)
+│   ├── values-local.yaml                        # k3d overrides (NodePorts only; images come from Docker Hub)
 │   ├── dashboards/taskflow-microservices.json   # The single Grafana dashboard
 │   └── templates/                               # config, datastores, microservices loop, monitoring
 ├── argocd/
 │   ├── install/argocd-values.yaml               # ArgoCD Helm install values (NodePort 30880)
 │   ├── project.yaml                             # AppProject (allowed repos / namespaces)
-│   ├── applications/                            # taskflow + monitoring Applications (branch: microservice)
-│   └── local-git-server/                        # In-cluster git server (local stand-in for GitHub)
+│   └── applications/                            # taskflow + monitoring Applications (GitHub, branch: microservice)
 ├── monitoring/
 │   └── kube-prometheus-stack-values.yaml        # Prometheus + Grafana values (one dashboard only)
 ├── scripts/
 │   ├── local-up.ps1 / local-up.sh               # Create the whole local infra (Windows / Linux)
-│   ├── local-push.ps1 / local-push.sh           # GitOps deploy: push branch to in-cluster git
-│   ├── local-creds.ps1 / local-creds.sh         # Print ArgoCD + Grafana logins
-│   └── local-git-server.py                      # Smart-HTTP git server used in-cluster
+│   └── local-creds.ps1 / local-creds.sh         # Print ArgoCD + Grafana logins
 ├── GITOPS-NOTES.md                              # Helm / ArgoCD / Grafana / CI-CD explained
 ├── services/
 │   ├── task-service/                            # Java 17 Spring Boot Task API (:8080)
@@ -688,7 +685,7 @@ microservice through a single dashboard: **TaskFlow Microservices**.
 > 📘 Concepts and architecture, explained step by step: **[GITOPS-NOTES.md](GITOPS-NOTES.md)**
 
 ```text
-git commit ──▶ local-push (or GitHub) ──▶ ArgoCD ──helm template──▶ namespace taskflow (7 services + Postgres + Redis)
+git push ──▶ GitHub Actions (build images → Docker Hub, commit new image tag) ──▶ ArgoCD ──helm template──▶ namespace taskflow (7 services + Postgres + Redis)
                                             │
                                             └──▶ namespace monitoring (Prometheus ──▶ Grafana dashboard)
 ```
@@ -724,31 +721,30 @@ docker info --format '{{.ServerVersion}}'; k3d version; kubectl version --client
 
 ### 2. Create the whole infrastructure — one command
 
+> 🐳 **Every image comes from Docker Hub**, built by the GitHub Actions pipeline
+> (`docker.io/sidharthhhh/<service>:<git-sha>`). There is **no local `docker build`** and no `k3d image import`.
+> ArgoCD tracks the `microservice` branch **on GitHub**, where the CD pipeline commits each new image tag.
+> Requirements: the Docker Hub repos are public (or the cluster has a pull secret) and the GitHub repo is readable by ArgoCD.
+
 **Windows (PowerShell):**
 ```powershell
 cd C:\path\to\taskflow-devops
-git checkout microservice
-powershell -ExecutionPolicy Bypass -File .\scripts\local-up.ps1             # first run: builds 7 images (~5-10 min)
-powershell -ExecutionPolicy Bypass -File .\scripts\local-up.ps1 -SkipBuild  # re-run without rebuilding images
+powershell -ExecutionPolicy Bypass -File .\scripts\local-up.ps1
 powershell -ExecutionPolicy Bypass -File .\scripts\local-creds.ps1          # print ArgoCD + Grafana logins
 ```
 
 **Windows (Git Bash)** or **Linux / macOS:**
 ```bash
 cd ~/taskflow-devops
-git checkout microservice
 chmod +x scripts/*.sh
-./scripts/local-up.sh               # first run: builds 7 images
-./scripts/local-up.sh --skip-build  # re-run without rebuilding images
+./scripts/local-up.sh
 ./scripts/local-creds.sh            # print ArgoCD + Grafana logins
 ```
 
 Both scripts are **idempotent** (safe to re-run) and do the following:
 1. Create the k3d cluster `taskflow` (Traefik disabled, NodePorts mapped to localhost) and point kubeconfig at `127.0.0.1`.
-2. Build the 7 images and load them with `k3d image import`.
-3. Install ArgoCD with Helm (`argo/argo-cd` chart 10.18.2).
-4. Start the **in-cluster git server**, which stands in for GitHub, and push the `microservice` branch to it.
-5. Apply the ArgoCD `AppProject` and the `taskflow` + `monitoring` Applications. ArgoCD then installs everything else.
+2. Install ArgoCD with Helm (`argo/argo-cd` chart 10.18.2).
+3. Apply the ArgoCD `AppProject` and the `taskflow` + `monitoring` Applications. ArgoCD then pulls the chart from GitHub and installs everything else, pulling the images from Docker Hub.
 
 Wait until both apps show `Synced / Healthy` (about 3-5 min on the first run):
 ```bash
@@ -770,63 +766,45 @@ kubectl config use-context k3d-taskflow
 kubectl config view -o jsonpath="{.clusters[?(@.name=='k3d-taskflow')].cluster.server}"   # note the port
 kubectl config set-cluster k3d-taskflow --server=https://127.0.0.1:<PORT>                  # Windows fix
 
-# 3.2 Images
-docker build -t taskflow-app:latest                  services/task-service
-docker build -t taskflow-auth-service:latest         services/auth-service
-docker build -t taskflow-analytics-service:latest    services/analytics-service
-docker build -t taskflow-scheduler-service:latest    services/scheduler-service
-docker build -t taskflow-notification-service:latest services/notification-service
-docker build -t taskflow-audit-service:latest        services/audit-service
-docker build -t taskflow-frontend:latest             frontend
-k3d image import -c taskflow taskflow-app:latest taskflow-auth-service:latest taskflow-analytics-service:latest \
-  taskflow-scheduler-service:latest taskflow-notification-service:latest taskflow-audit-service:latest taskflow-frontend:latest
-
-# 3.3 ArgoCD
+# 3.2 ArgoCD
 helm repo add argo https://argoproj.github.io/argo-helm && helm repo update
 helm upgrade --install argocd argo/argo-cd --version 10.18.2 -n argocd --create-namespace \
   -f argocd/install/argocd-values.yaml --wait
 
-# 3.4 In-cluster git server + push the branch to it
-kubectl apply -f argocd/local-git-server/git-server.yaml
-kubectl create configmap git-server-script -n gitops --from-file=scripts/local-git-server.py --dry-run=client -o yaml | kubectl apply -f -
-kubectl -n gitops rollout status deploy/git-server
-git remote add local-gitops http://localhost:8765/taskflow-devops.git
-kubectl -n gitops port-forward svc/git-server 8765:8765      # leave running in a 2nd terminal
-git push --force local-gitops microservice                   # in the 1st terminal, then Ctrl+C the port-forward
-
-# 3.5 ArgoCD project + apps (repoURL swapped from GitHub to the in-cluster git server)
+# 3.3 ArgoCD project + apps (they point at github.com/sidharthhhh/taskflow-devops, branch microservice)
 kubectl apply -f argocd/project.yaml
-sed 's#https://github.com/sidharthhhh/taskflow-devops.git#http://git-server.gitops.svc.cluster.local:8765/taskflow-devops.git#' \
-  argocd/applications/taskflow.yaml | kubectl apply -f -
-sed 's#https://github.com/sidharthhhh/taskflow-devops.git#http://git-server.gitops.svc.cluster.local:8765/taskflow-devops.git#' \
-  argocd/applications/monitoring.yaml | kubectl apply -f -
+kubectl apply -f argocd/applications/
 ```
 
-PowerShell equivalent of step 3.5 (`sed` isn't available in PowerShell):
-```powershell
-$gh = 'https://github.com/sidharthhhh/taskflow-devops.git'; $local = 'http://git-server.gitops.svc.cluster.local:8765/taskflow-devops.git'
-Get-ChildItem argocd\applications\*.yaml | ForEach-Object { (Get-Content $_ -Raw).Replace($gh, $local) | kubectl apply -f - }
-```
-
-> ☁️ **Using GitHub instead of the local git server:** push the branch to GitHub and apply the
-> Application files *unchanged* (`kubectl apply -f argocd/applications/`). ArgoCD will then
-> track `github.com/sidharthhhh/taskflow-devops@microservice`. For a private repo, first register
-> it: `argocd repo add https://github.com/sidharthhhh/taskflow-devops.git --username <user> --password <PAT>`.
+> 🔒 **Private GitHub repo?** Register it first:
+> `argocd repo add https://github.com/sidharthhhh/taskflow-devops.git --username <user> --password <PAT>`.
+> **Private Docker Hub repos?** Create a pull secret and reference it with `imagePullSecrets`.
 
 ### 4. Day-to-day GitOps workflow
 
-| I want to… | Windows (PowerShell) | Linux / Git Bash |
-|---|---|---|
-| Change config/replicas/resources | edit `helm/taskflow/values*.yaml` → `git commit -am "..."` → `.\scripts\local-push.ps1` | same → `./scripts/local-push.sh` |
-| Ship new code for a service | `docker build -t taskflow-auth-service:latest services/auth-service`<br>`k3d image import -c taskflow taskflow-auth-service:latest`<br>`kubectl -n taskflow rollout restart deploy/auth-service` | same commands |
-| Edit the Grafana dashboard | edit in Grafana → *Export → JSON* → save to `helm/taskflow/dashboards/taskflow-microservices.json` → commit → push script | same |
-| Upgrade Prometheus/Grafana | change `targetRevision` in `argocd/applications/monitoring.yaml` → commit → push script | same |
-| Roll back | `git revert <commit>` → push script | same |
-| Pause / resume the cluster | `k3d cluster stop taskflow` / `k3d cluster start taskflow` | same |
-| Delete everything | `k3d cluster delete taskflow` | same |
+Everything goes through GitHub — the same path for you and for CI:
+
+```text
+edit code → git commit → git push origin microservice
+   → GitHub Actions: tests, builds 7 images, pushes docker.io/sidharthhhh/<svc>:<sha>
+   → CD commits "deploy: bump image tag to <sha> [skip ci]" into helm/taskflow/values.yaml
+   → ArgoCD (polls GitHub every 60s) syncs → pods roll to the new image
+```
+
+| I want to… | Do this |
+|---|---|
+| Ship a code / UI change | edit → `git commit` → `git push origin microservice` → wait for the **CD** run to finish (GitHub → Actions) → ArgoCD syncs within ~1 min → hard-refresh the browser (Ctrl+F5) |
+| Change config / replicas / resources | edit `helm/taskflow/values*.yaml` → commit → push |
+| Sync now instead of waiting 60s | `kubectl -n argocd annotate application taskflow argocd.argoproj.io/refresh=hard --overwrite` (or *Refresh* in the ArgoCD UI) |
+| Pull the CI bot's tag-bump commit | `git pull origin microservice` (**do this before your next push**, otherwise the push is rejected as non-fast-forward) |
+| Edit the Grafana dashboard | edit in Grafana → *Export → JSON* → save to `helm/taskflow/dashboards/taskflow-microservices.json` → commit → push |
+| Upgrade Prometheus/Grafana | change `targetRevision` in `argocd/applications/monitoring.yaml` → commit → push |
+| Roll back | `git revert <commit>` → push (or `argocd app rollback taskflow <ID>`) |
+| Pause / resume the cluster | `k3d cluster stop taskflow` / `k3d cluster start taskflow` |
+| Delete everything | `k3d cluster delete taskflow` |
 
 > ⚠️ After `k3d cluster start`, kubeconfig may point at `host.docker.internal` again. Re-run the
-> `set-cluster ... 127.0.0.1` fix (see §3.1), or just re-run the up script with `-SkipBuild` / `--skip-build`.
+> `set-cluster ... 127.0.0.1` fix (see §3.1), or just re-run the up script.
 
 ### 5. Debugging command reference
 
@@ -930,14 +908,21 @@ helm list -A                                                       # Helm releas
 helm get values argocd -n argocd                                   # values used for the ArgoCD install
 ```
 
-#### 5.7 In-cluster git server
+#### 5.7 Which image is running? (CI tag → GitHub → ArgoCD → pods)
 ```bash
-kubectl get pods -n gitops
-kubectl logs -n gitops deploy/git-server --tail=30             # see ArgoCD fetches + your pushes
-kubectl -n gitops port-forward svc/git-server 8765:8765        # then, in another terminal:
-git ls-remote http://localhost:8765/taskflow-devops.git        # what commit the server has
-git log --oneline -1 microservice                              # compare with your local commit
+kubectl get deploy -n taskflow -o custom-columns=NAME:.metadata.name,IMAGE:.spec.template.spec.containers[0].image
+kubectl get application taskflow -n argocd -o jsonpath='{.status.sync.revision}{"\n"}'   # commit ArgoCD deployed
+git ls-remote origin microservice                                                         # latest commit on GitHub - should match
+sed -n '/^image:/,/pullPolicy/p' helm/taskflow/values.yaml                                # tag CI wrote (Linux / Git Bash)
+# 200 = that image tag exists on Docker Hub (replace <sha> with the tag):
+curl -s -o /dev/null -w '%{http_code}\n' https://hub.docker.com/v2/repositories/sidharthhhh/taskflow-frontend/tags/<sha>
 ```
+```powershell
+# Windows: show the tag CI wrote
+Select-String -Path helm\taskflow\values.yaml -Pattern '^  tag:'
+```
+If the pods run an **old image**, either ArgoCD hasn't synced the tag-bump commit yet (revision ≠ GitHub), or the CD
+workflow didn't finish / didn't push images (check GitHub → Actions → *CD - Build Images & GitOps Deploy*).
 
 #### 5.8 Prometheus
 ```bash
@@ -973,8 +958,9 @@ kubectl exec -it deploy/redis -n taskflow -- redis-cli subscribe taskflow:events
 
 #### 5.11 Images inside k3d
 ```bash
-docker exec k3d-taskflow-server-0 crictl images | grep taskflow    # images the cluster can use
-k3d image import -c taskflow taskflow-app:latest                   # (re)load one image
+docker exec k3d-taskflow-server-0 crictl images | grep sidharthhhh      # images the node has pulled from Docker Hub
+kubectl get events -n taskflow --sort-by=.lastTimestamp | grep -i -E "pull|image"
+kubectl describe pod <pod> -n taskflow | grep -A3 -i "image"            # Image / Image ID / pull events
 kubectl get pods -n taskflow -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.containers[0].image}{"\n"}{end}'
 ```
 
@@ -985,8 +971,10 @@ kubectl get pods -n taskflow -o jsonpath='{range .items[*]}{.metadata.name}{"\t"
 | `kubectl` hangs / `dial tcp 192.168.x.x ... timeout` (Windows) | kubeconfig uses `host.docker.internal` → firewalled LAN IP | `kubectl config set-cluster k3d-taskflow --server=https://127.0.0.1:<port>` (§3.1) |
 | `failed to connect to the docker API ... dockerDesktopLinuxEngine` | Docker Desktop isn't running | Start Docker Desktop, wait for "Engine running" |
 | `helm is not installed / not on PATH` (PowerShell) | Helm installed only for Git Bash | `winget install Helm.Helm`, then open a new terminal |
-| Pod `ErrImageNeverPull` | image not imported into k3d | `k3d image import -c taskflow <image>:latest` |
-| App `OutOfSync` + `ComparisonError ... repository not found` | git server down or branch never pushed | `kubectl -n gitops get pods`, then re-run the push script |
+| Pod `ImagePullBackOff` / `ErrImagePull` | the tag isn't on Docker Hub yet (CD still running or failed), the repo is private, or the cluster has no internet | check GitHub → Actions; run the `curl` check in §5.7; make the Docker Hub repo public or add a pull secret |
+| UI/code change doesn't show up | ArgoCD still on the old commit, CD didn't bump the tag, or browser cache | compare `.status.sync.revision` with `git ls-remote origin microservice` (§5.7); refresh the app; Ctrl+F5 |
+| `git push` rejected: *non-fast-forward* | the CD bot committed the image-tag bump after your last pull | `git pull --rebase origin microservice`, then push again |
+| App `Unknown` / `ComparisonError ... repository not found` | GitHub unreachable, branch missing, or private repo | `kubectl logs -n argocd deploy/argocd-repo-server --tail=50`; for a private repo run `argocd repo add ...` (§3) |
 | `namespace kube-system is not permitted in project` | AppProject missing a destination | already allowed in `argocd/project.yaml`; re-apply it |
 | `no matches for kind "ServiceMonitor"` on first install | taskflow synced before monitoring installed the CRDs | it retries automatically (retry limit 20); or `argocd app sync taskflow` |
 | Sync stuck in `Running` on an old commit | an earlier sync is still retrying | `argocd app terminate-op <app>` then `argocd app sync <app>` |

@@ -63,13 +63,16 @@ helm/taskflow/
     └── NOTES.txt                 printed after install
 ```
 
+> ⚠️ **Never put `image.registry` / `image.tag` / `image.pullPolicy` in `values-local.yaml`.** It wins over
+> `values.yaml`, so the cluster would ignore the images CI builds and the tag CI commits (this is exactly what
+> made a UI change not show up once). `values-local.yaml` holds environment settings only (NodePorts, PVCs).
+
 ### How values layering works
 `helm template -f values.yaml -f values-local.yaml` → **later files win**.
 
 | Setting           | values.yaml (cloud)        | values-local.yaml (k3d)              |
 |-------------------|----------------------------|--------------------------------------|
-| image.registry    | `docker.io/sidharthhhh`    | `""` (bare local image names)        |
-| image.pullPolicy  | `IfNotPresent`             | `Never` (images loaded via `k3d image import`) |
+| image.*           | Docker Hub, tag set by CI  | **not overridden** (same images as prod) |
 | task API service  | ClusterIP                  | NodePort 30080                       |
 | frontend service  | LoadBalancer               | NodePort 30088                       |
 | audit /data       | emptyDir                   | PVC (local-path)                     |
@@ -120,7 +123,6 @@ argocd/
 ├── applications/
 │   ├── taskflow.yaml              Application → helm/taskflow on branch microservice → ns taskflow
 │   └── monitoring.yaml            Application → kube-prometheus-stack chart + our values → ns monitoring
-└── local-git-server/git-server.yaml   in-cluster git server (local demo only, see §5)
 ```
 
 ### Vocabulary
@@ -200,42 +202,40 @@ generated automatically.
 
 ---
 
-## 5. Running locally without pushing to GitHub
+## 5. Running locally — same images as CI
 
-ArgoCD **pulls** from git — normally GitHub. To run the whole loop without pushing,
-a tiny git server runs **inside the cluster** (`argocd/local-git-server/`, code in
-`scripts/local-git-server.py`) and stands in for GitHub:
+The local k3d cluster is deployed exactly like production: **ArgoCD tracks the `microservice`
+branch on GitHub**, and every pod runs a **Docker Hub image built by GitHub Actions**
+(`docker.io/sidharthhhh/<service>:<git-sha>`). There is no local `docker build`, no
+`k3d image import`, and no second git server.
 
 ```
-your laptop repo ──git push (via kubectl port-forward)──▶ git-server.gitops (in k3d)
-                                                              ▲
-                                       ArgoCD reads from ─────┘
-                http://git-server.gitops.svc.cluster.local:8765/taskflow-devops.git
+git push ──▶ GitHub Actions ──push images──▶ Docker Hub (:<sha>)
+                  │
+                  └─commit "deploy: bump image tag"─▶ GitHub (helm/taskflow/values.yaml)
+                                                          ▲
+                                        ArgoCD polls ─────┘ (every 60s) ──▶ k3d pulls :<sha> from Docker Hub
 ```
-
-`scripts/local-up.sh` rewrites the `repoURL` in the Applications from GitHub to this URL when
-applying them. The files in git keep the GitHub URL, so the real setup is unchanged.
 
 ### Commands
 ```bash
-./scripts/local-up.sh              # everything: cluster, images, ArgoCD, git server, apps
-./scripts/local-up.sh --skip-build # same, without rebuilding images
+./scripts/local-up.sh              # cluster + ArgoCD + apps (images come from Docker Hub)
 ./scripts/local-creds.sh           # print ArgoCD + Grafana logins
 # Windows PowerShell equivalents:
-#   powershell -ExecutionPolicy Bypass -File .\scripts\local-up.ps1 [-SkipBuild]
-#   powershell -ExecutionPolicy Bypass -File .\scripts\local-push.ps1
+#   powershell -ExecutionPolicy Bypass -File .\scripts\local-up.ps1
 #   powershell -ExecutionPolicy Bypass -File .\scripts\local-creds.ps1
 
-# Change something and watch GitOps deploy it:
-#   e.g. set services.analytics.replicas: 2 in helm/taskflow/values.yaml
-git commit -am "scale analytics to 2"
-./scripts/local-push.sh            # push to the in-cluster git server + ArgoCD refresh
-kubectl get applications -n argocd -w
+# Ship a change (code, UI or config):
+git commit -am "my change"
+git push origin microservice                 # CI builds + pushes images and commits the new tag
+kubectl get applications -n argocd -w        # ArgoCD syncs it within ~1 min
+git pull origin microservice                 # get the bot's tag-bump commit before your next push
 
-# New code? rebuild + import the image, then restart the deployment:
-docker build -t taskflow-auth-service:latest services/auth-service
-k3d image import -c taskflow taskflow-auth-service:latest
-kubectl -n taskflow rollout restart deploy/auth-service
+# Sync immediately instead of waiting for the poll:
+kubectl -n argocd annotate application taskflow argocd.argoproj.io/refresh=hard --overwrite
+
+# Which image is running vs what CI built?
+kubectl get deploy -n taskflow -o custom-columns=NAME:.metadata.name,IMAGE:.spec.template.spec.containers[0].image
 
 # Tear down
 k3d cluster delete taskflow
@@ -281,9 +281,9 @@ All workflows in `.github/workflows/` now trigger **only** on `microservice`
   ArgoCD never gets pointed at a tag that doesn't exist.
 - Needs `permissions: contents: write`. If the branch is protected, allow
   `github-actions[bot]` to push or switch to a PR-based bump.
-- The **local** cluster uses `values-local.yaml` (local images, tag `latest`), so CI
-  tag bumps only take effect in a cluster that uses `values.yaml` images (e.g. EKS with
-  its own ArgoCD Application without `values-local.yaml`).
+- The **local** cluster uses the same `values.yaml` image tag as every other environment
+  (`values-local.yaml` deliberately has no `image:` block), so a CI tag bump reaches it
+  automatically. The Docker Hub repos must be public (or a pull secret configured).
 
 ### Required GitHub secrets (unchanged)
 `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`. AWS secrets are no longer needed by CD: ArgoCD
@@ -297,8 +297,9 @@ inside the cluster does the deploying.
 |---------|-------|
 | App `OutOfSync` forever | `argocd app diff taskflow` / UI → "Diff" tab |
 | App `Degraded` | `kubectl -n taskflow get pods`, `kubectl -n taskflow describe pod <p>` |
-| `ErrImageNeverPull` | image not imported: `k3d image import -c taskflow <image>:latest` |
-| `ComparisonError ... repository not found` | git server down: `kubectl -n gitops get pods`, re-run `local-push.sh` |
+| `ImagePullBackOff` / `ErrImagePull` | tag not on Docker Hub (CD still running / failed), repo private, or no internet from the cluster |
+| Change not visible after CI finished | ArgoCD still on an old commit: compare `kubectl get application taskflow -n argocd -o jsonpath='{.status.sync.revision}'` with `git ls-remote origin microservice`; then refresh |
+| `ComparisonError ... repository not found` | GitHub unreachable or private repo: `kubectl logs -n argocd deploy/argocd-repo-server --tail=50` |
 | Dashboard missing | `kubectl -n taskflow get cm taskflow-grafana-dashboard --show-labels`; `kubectl -n monitoring logs deploy/monitoring-grafana -c grafana-sc-dashboard` |
 | Task API panels empty | Prometheus → Status → Targets → `serviceMonitor/taskflow/taskflow-app` should be UP |
 | kubectl timeout on Windows | kubeconfig server must be `https://127.0.0.1:<port>` |
