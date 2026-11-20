@@ -16,7 +16,7 @@
 # -----------------------------------------------------------------------------
 image:
   registry: docker.io/sidharthhhh
-  tag: 865663dfab0375e5478a1743d183bce9fe504e48
+  tag: 359ee4d104e5c5a6c3fdbeb2c9cae432735aa200
   pullPolicy: IfNotPresent
 # -----------------------------------------------------------------------------
 # Shared configuration (rendered into ConfigMaps / Secret)
