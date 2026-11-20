@@ -14,7 +14,7 @@ reason about it (and explain it in an interview) without reading every file.
               ▼                                ▼
      GitHub Actions CI                 GitHub Actions CD (cd-deploy.yml)
      (test, lint, scan,                1. build + push 7 images  :<git-sha>
-      helm lint/template)              2. yq: helm/taskflow/values.yaml image.tag = <git-sha>
+      helm lint/template)              2. sed: helm/taskflow/values.yaml image.tag = <git-sha>
                                        3. commit "deploy: bump image tag [skip ci]"
                                                        │
                                                        ▼
@@ -220,6 +220,11 @@ applying them. The files in git keep the GitHub URL, so the real setup is unchan
 ```bash
 ./scripts/local-up.sh              # everything: cluster, images, ArgoCD, git server, apps
 ./scripts/local-up.sh --skip-build # same, without rebuilding images
+./scripts/local-creds.sh           # print ArgoCD + Grafana logins
+# Windows PowerShell equivalents:
+#   powershell -ExecutionPolicy Bypass -File .\scripts\local-up.ps1 [-SkipBuild]
+#   powershell -ExecutionPolicy Bypass -File .\scripts\local-push.ps1
+#   powershell -ExecutionPolicy Bypass -File .\scripts\local-creds.ps1
 
 # Change something and watch GitOps deploy it:
 #   e.g. set services.analytics.replicas: 2 in helm/taskflow/values.yaml
@@ -269,6 +274,9 @@ All workflows in `.github/workflows/` now trigger **only** on `microservice`
 - The bump commit message contains `[skip ci]`, and the job also checks for it, so the
   bot's commit doesn't start another build → no infinite loop.
 - `concurrency: cd-microservice` serialises deploys so two tag bumps can't race.
+- The bump uses targeted `sed` edits inside the `image:` block, so the commit diff is only the
+  `registry`/`tag` lines. (`yq -i` was tried first: it reformats the whole file, which makes
+  every deploy diff noisy.) `yq` is then used only to verify the new tag.
 - The tag bump only happens if images were actually pushed (Docker Hub secrets present) —
   ArgoCD never gets pointed at a tag that doesn't exist.
 - Needs `permissions: contents: write`. If the branch is protected, allow

@@ -100,10 +100,15 @@ jobs:
       - name: Update image.tag in helm/taskflow/values.yaml
         run: |
           SHA="${{ github.sha }}"
-          # yq edits YAML structurally (keeps comments) - preinstalled on GitHub runners
-          yq -i ".image.tag = \"${SHA}\"" helm/taskflow/values.yaml
-          yq -i ".image.registry = \"docker.io/${{ secrets.DOCKERHUB_USERNAME }}\"" helm/taskflow/values.yaml
-          git diff --stat
+          REGISTRY="docker.io/${{ secrets.DOCKERHUB_USERNAME }}"
+          FILE=helm/taskflow/values.yaml
+          # Targeted line edits inside the top-level `image:` block only.
+          # (yq -i would re-format the whole file and make every deploy diff noisy.)
+          sed -i -E "/^image:/,/^[^ #]/ s|^(  tag:).*|\1 ${SHA}|"            "$FILE"
+          sed -i -E "/^image:/,/^[^ #]/ s|^(  registry:).*|\1 ${REGISTRY}|"  "$FILE"
+          # Sanity check: the rendered value must be exactly the new SHA.
+          test "$(yq '.image.tag' "$FILE")" = "$SHA"
+          git diff
 
       - name: Commit & push tag bump
         run: |
