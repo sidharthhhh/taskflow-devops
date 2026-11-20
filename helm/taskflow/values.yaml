@@ -16,13 +16,12 @@
 # -----------------------------------------------------------------------------
 image:
   registry: docker.io/sidharthhhh
-  tag: latest
+  tag: 865663dfab0375e5478a1743d183bce9fe504e48
   pullPolicy: IfNotPresent
-
 # -----------------------------------------------------------------------------
 # Shared configuration (rendered into ConfigMaps / Secret)
 # -----------------------------------------------------------------------------
-taskConfig:            # -> ConfigMap "taskflow-config" (Spring Boot task API)
+taskConfig: # -> ConfigMap "taskflow-config" (Spring Boot task API)
   SERVER_PORT: "8080"
   SPRING_APPLICATION_NAME: "TaskFlow"
   SPRING_DATASOURCE_URL: "jdbc:postgresql://postgres-service:5432/taskflowdb"
@@ -30,8 +29,7 @@ taskConfig:            # -> ConfigMap "taskflow-config" (Spring Boot task API)
   SPRING_JPA_HIBERNATE_DDL_AUTO: "update"
   SPRING_H2_CONSOLE_ENABLED: "false"
   JAVA_OPTS: "-XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0"
-
-meshConfig:            # -> ConfigMap "taskflow-mesh-config" (service discovery URLs)
+meshConfig: # -> ConfigMap "taskflow-mesh-config" (service discovery URLs)
   REDIS_URL: "redis://redis-service:6379"
   TASK_SERVICE_URL: "http://taskflow-service:8080"
   AUTH_SERVICE_URL: "http://auth-service:3001"
@@ -42,7 +40,6 @@ meshConfig:            # -> ConfigMap "taskflow-mesh-config" (service discovery 
   CACHE_TTL_SEC: "10"
   CRON_INTERVAL_MS: "30000"
   AUDIT_LOG_PATH: "/data/audit.jsonl"
-
 # NOTE: dev-only credentials. In a real environment, replace this with
 # External Secrets / Sealed Secrets and set `secret.create: false`.
 secret:
@@ -54,7 +51,6 @@ secret:
     POSTGRES_PASSWORD: taskflowpassword
     POSTGRES_DB: taskflowdb
     JWT_SECRET: taskflow-k8s-dev-jwt-secret-change-in-prod
-
 # -----------------------------------------------------------------------------
 # Stateful backing services
 # -----------------------------------------------------------------------------
@@ -63,18 +59,16 @@ postgres:
   image: postgres:16-alpine
   storage:
     size: 1Gi
-    storageClass: ""     # "" = cluster default StorageClass
+    storageClass: "" # "" = cluster default StorageClass
   resources:
-    requests: { memory: 128Mi, cpu: 100m }
-    limits:   { memory: 256Mi, cpu: 250m }
-
+    requests: {memory: 128Mi, cpu: 100m}
+    limits: {memory: 256Mi, cpu: 250m}
 redis:
   enabled: true
   image: redis:7-alpine
   resources:
-    requests: { memory: 64Mi, cpu: 50m }
-    limits:   { memory: 160Mi, cpu: 150m }
-
+    requests: {memory: 64Mi, cpu: 50m}
+    limits: {memory: 160Mi, cpu: 150m}
 # -----------------------------------------------------------------------------
 # Microservices
 #   Every entry below is rendered by templates/microservices.yaml into a
@@ -98,119 +92,112 @@ services:
     enabled: true
     name: taskflow-app
     serviceName: taskflow-service
-    image: { repository: taskflow-app }
+    image: {repository: taskflow-app}
     port: 8080
     waitForPostgres: true
-    podSecurityContext: { runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, fsGroup: 10001 }
+    podSecurityContext: {runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, fsGroup: 10001}
     envFrom:
-      - configMapRef: { name: taskflow-config }
-      - secretRef: { name: taskflow-secret }
+      - configMapRef: {name: taskflow-config}
+      - secretRef: {name: taskflow-secret}
     health:
       liveness: /actuator/health/liveness
       readiness: /actuator/health/readiness
       startup: true
     resources:
-      requests: { memory: 256Mi, cpu: 200m }
-      limits:   { memory: 512Mi, cpu: 500m }
-    autoscaling: { enabled: true, minReplicas: 1, maxReplicas: 5, targetCPU: 75 }
-    pdb: { enabled: true, minAvailable: 1 }
-    metrics: { enabled: true, path: /actuator/prometheus }   # Spring Boot Micrometer
-    service: { type: ClusterIP }
-
+      requests: {memory: 256Mi, cpu: 200m}
+      limits: {memory: 512Mi, cpu: 500m}
+    autoscaling: {enabled: true, minReplicas: 1, maxReplicas: 5, targetCPU: 75}
+    pdb: {enabled: true, minAvailable: 1}
+    metrics: {enabled: true, path: /actuator/prometheus} # Spring Boot Micrometer
+    service: {type: ClusterIP}
   auth:
     enabled: true
     name: auth-service
-    image: { repository: taskflow-auth-service }
+    image: {repository: taskflow-auth-service}
     port: 3001
     waitForPostgres: true
-    podSecurityContext: { runAsNonRoot: true, runAsUser: 1000 }
+    podSecurityContext: {runAsNonRoot: true, runAsUser: 1000}
     env:
-      - { name: PGHOST, value: postgres-service }
-      - { name: PGPORT, value: "5432" }
-      - { name: PGDATABASE, value: authdb }
+      - {name: PGHOST, value: postgres-service}
+      - {name: PGPORT, value: "5432"}
+      - {name: PGDATABASE, value: authdb}
       - name: PGADMIN_DB
-        valueFrom: { secretKeyRef: { name: taskflow-secret, key: POSTGRES_DB } }
+        valueFrom: {secretKeyRef: {name: taskflow-secret, key: POSTGRES_DB}}
       - name: PGUSER
-        valueFrom: { secretKeyRef: { name: taskflow-secret, key: POSTGRES_USER } }
+        valueFrom: {secretKeyRef: {name: taskflow-secret, key: POSTGRES_USER}}
       - name: PGPASSWORD
-        valueFrom: { secretKeyRef: { name: taskflow-secret, key: POSTGRES_PASSWORD } }
+        valueFrom: {secretKeyRef: {name: taskflow-secret, key: POSTGRES_PASSWORD}}
       - name: JWT_SECRET
-        valueFrom: { secretKeyRef: { name: taskflow-secret, key: JWT_SECRET } }
-    health: { liveness: /health, readiness: /health }
+        valueFrom: {secretKeyRef: {name: taskflow-secret, key: JWT_SECRET}}
+    health: {liveness: /health, readiness: /health}
     resources:
-      requests: { memory: 64Mi, cpu: 50m }
-      limits:   { memory: 128Mi, cpu: 200m }
-
+      requests: {memory: 64Mi, cpu: 50m}
+      limits: {memory: 128Mi, cpu: 200m}
   analytics:
     enabled: true
     name: analytics-service
-    image: { repository: taskflow-analytics-service }
+    image: {repository: taskflow-analytics-service}
     port: 3002
-    podSecurityContext: { runAsNonRoot: true, runAsUser: 1000 }
+    podSecurityContext: {runAsNonRoot: true, runAsUser: 1000}
     envFrom:
-      - configMapRef: { name: taskflow-mesh-config }
-    health: { liveness: /health, readiness: /health }
+      - configMapRef: {name: taskflow-mesh-config}
+    health: {liveness: /health, readiness: /health}
     resources:
-      requests: { memory: 64Mi, cpu: 50m }
-      limits:   { memory: 128Mi, cpu: 200m }
-
+      requests: {memory: 64Mi, cpu: 50m}
+      limits: {memory: 128Mi, cpu: 200m}
   scheduler:
     enabled: true
     name: scheduler-service
-    image: { repository: taskflow-scheduler-service }
+    image: {repository: taskflow-scheduler-service}
     port: 3003
-    podSecurityContext: { runAsNonRoot: true, runAsUser: 1000 }
+    podSecurityContext: {runAsNonRoot: true, runAsUser: 1000}
     envFrom:
-      - configMapRef: { name: taskflow-mesh-config }
-    health: { liveness: /health, readiness: /health }
+      - configMapRef: {name: taskflow-mesh-config}
+    health: {liveness: /health, readiness: /health}
     resources:
-      requests: { memory: 64Mi, cpu: 50m }
-      limits:   { memory: 128Mi, cpu: 200m }
-
+      requests: {memory: 64Mi, cpu: 50m}
+      limits: {memory: 128Mi, cpu: 200m}
   notification:
     enabled: true
     name: notification-service
-    image: { repository: taskflow-notification-service }
+    image: {repository: taskflow-notification-service}
     port: 8081
-    podSecurityContext: { runAsNonRoot: true, runAsUser: 10001 }
+    podSecurityContext: {runAsNonRoot: true, runAsUser: 10001}
     envFrom:
-      - configMapRef: { name: taskflow-mesh-config }
-    health: { liveness: /health, readiness: /health }
+      - configMapRef: {name: taskflow-mesh-config}
+    health: {liveness: /health, readiness: /health}
     resources:
-      requests: { memory: 32Mi, cpu: 25m }
-      limits:   { memory: 64Mi, cpu: 100m }
-
+      requests: {memory: 32Mi, cpu: 25m}
+      limits: {memory: 64Mi, cpu: 100m}
   audit:
     enabled: true
     name: audit-service
-    image: { repository: taskflow-audit-service }
+    image: {repository: taskflow-audit-service}
     port: 8082
-    podSecurityContext: { runAsNonRoot: true, runAsUser: 10001, fsGroup: 10001 }
+    podSecurityContext: {runAsNonRoot: true, runAsUser: 10001, fsGroup: 10001}
     envFrom:
-      - configMapRef: { name: taskflow-mesh-config }
+      - configMapRef: {name: taskflow-mesh-config}
     data:
       mountPath: /data
-      persistence: { enabled: false, size: 256Mi, storageClass: "" }
-    health: { liveness: /health, readiness: /health }
+      persistence: {enabled: false, size: 256Mi, storageClass: ""}
+    health: {liveness: /health, readiness: /health}
     resources:
-      requests: { memory: 32Mi, cpu: 25m }
-      limits:   { memory: 64Mi, cpu: 100m }
-
+      requests: {memory: 32Mi, cpu: 25m}
+      limits: {memory: 64Mi, cpu: 100m}
   frontend:
     enabled: true
     name: taskflow-frontend
     serviceName: frontend-service
-    image: { repository: taskflow-frontend }
+    image: {repository: taskflow-frontend}
     port: 3000
-    podSecurityContext: { runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001 }
+    podSecurityContext: {runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001}
     envFrom:
-      - configMapRef: { name: taskflow-mesh-config }
-    health: { liveness: /api/health, readiness: /api/health }
+      - configMapRef: {name: taskflow-mesh-config}
+    health: {liveness: /api/health, readiness: /api/health}
     resources:
-      requests: { memory: 128Mi, cpu: 100m }
-      limits:   { memory: 256Mi, cpu: 300m }
-    service: { type: LoadBalancer }
-
+      requests: {memory: 128Mi, cpu: 100m}
+      limits: {memory: 256Mi, cpu: 300m}
+    service: {type: LoadBalancer}
 # -----------------------------------------------------------------------------
 # Monitoring integration (requires kube-prometheus-stack - see monitoring/)
 # -----------------------------------------------------------------------------
