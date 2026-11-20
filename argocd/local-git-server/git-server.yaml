@@ -47,7 +47,7 @@ spec:
           args:
             - |
               set -e
-              apk add --no-cache git >/dev/null
+              apk add --no-cache git git-daemon >/dev/null   # git-daemon ships git-http-backend
               REPO=/srv/git/taskflow-devops.git
               [ -d "$REPO" ] || git init --bare -b microservice "$REPO"
               git config --global --add safe.directory '*'

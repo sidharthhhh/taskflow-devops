@@ -39,5 +39,5 @@ spec:
       # last-applied annotation (262144 bytes) -> use server-side apply.
       - ServerSideApply=true
     retry:
-      limit: 5
+      limit: 20      # taskflow ServiceMonitor waits for the monitoring CRDs on first install
       backoff: { duration: 10s, factor: 2, maxDuration: 3m }

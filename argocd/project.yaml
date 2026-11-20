@@ -16,6 +16,10 @@ spec:
       namespace: taskflow
     - server: https://kubernetes.default.svc
       namespace: monitoring
+    # kube-prometheus-stack creates Services in kube-system to scrape the
+    # kubelet (cAdvisor) and CoreDNS.
+    - server: https://kubernetes.default.svc
+      namespace: kube-system
   # Cluster-scoped kinds the apps are allowed to create (CRDs, RBAC, namespaces, webhooks...).
   clusterResourceWhitelist:
     - group: "*"
