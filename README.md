@@ -655,3 +655,19 @@ Invoke-RestMethod -Uri "http://localhost:30080/api/tasks/1" -Method Delete
 | `GET /actuator/health/readiness`| K8s Readiness Probe | Verifies database connectivity before routing traffic |
 | `GET /actuator/prometheus` | Metrics Scraping | Full Prometheus exposition format metrics for Grafana / Prometheus |
 | `GET /swagger-ui.html` | Interactive Docs | OpenAPI 3 visual playground to test all endpoints |
+
+---
+
+## ☸️ Helm + ArgoCD GitOps + Grafana (local k3d)
+
+The stack is packaged as a Helm chart (`helm/taskflow`) and deployed by ArgoCD from the
+`microservice` branch, with a single Grafana dashboard ("TaskFlow Microservices") for all services.
+
+```bash
+./scripts/local-up.sh      # k3d cluster + images + ArgoCD + monitoring + app
+./scripts/local-push.sh    # deploy committed changes (GitOps, no GitHub push needed)
+```
+
+ArgoCD http://localhost:30880 · Grafana http://localhost:30300 · Frontend http://localhost:30088
+
+📘 Full explanation (architecture, Helm, ArgoCD, monitoring, CI/CD): [GITOPS-NOTES.md](GITOPS-NOTES.md)
