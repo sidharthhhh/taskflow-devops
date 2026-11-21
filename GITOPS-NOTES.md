@@ -8,7 +8,7 @@ reason about it (and explain it in an interview) without reading every file.
 ## 1. The big picture
 
 ```
- developer ──git push──▶ GitHub (branch: microservice)
+ developer ──git push──▶ GitHub (branch: main)
                               │
               ┌───────────────┴────────────────┐
               ▼                                ▼
@@ -38,7 +38,7 @@ reason about it (and explain it in an interview) without reading every file.
 | Manual `kubectl edit` drifts silently        | ArgoCD **self-heals** drift back to git          |
 | Rollback = `kubectl rollout undo`            | Rollback = `git revert` (audited in history)     |
 
-Git is the single source of truth: *what is in the `microservice` branch is what runs*.
+Git is the single source of truth: *what is in the `main` branch is what runs*.
 
 ---
 
@@ -121,7 +121,7 @@ argocd/
 ├── install/argocd-values.yaml     how ArgoCD itself is installed (Helm chart argo/argo-cd 10.18.2 = v3.6.2)
 ├── project.yaml                   AppProject: allowed git repos + allowed namespaces
 ├── applications/
-│   ├── taskflow.yaml              Application → helm/taskflow on branch microservice → ns taskflow
+│   ├── taskflow.yaml              Application → helm/taskflow on branch main → ns taskflow
 │   └── monitoring.yaml            Application → kube-prometheus-stack chart + our values → ns monitoring
 ```
 
@@ -134,7 +134,7 @@ argocd/
 | Healthy / Progressing / Degraded | are the deployed resources actually working?      |
 | `automated.prune`    | delete resources that were removed from git                      |
 | `automated.selfHeal` | undo manual changes (`kubectl edit/scale`) – try it!             |
-| `targetRevision: microservice` | the branch ArgoCD tracks                               |
+| `targetRevision: main`         | the branch ArgoCD tracks                               |
 
 ### Multi-source Application (monitoring)
 `monitoring.yaml` pulls the **chart** from the prometheus-community Helm repo, but the
@@ -204,7 +204,7 @@ generated automatically.
 
 ## 5. Running locally — same images as CI
 
-The local k3d cluster is deployed exactly like production: **ArgoCD tracks the `microservice`
+The local k3d cluster is deployed exactly like production: **ArgoCD tracks the `main`
 branch on GitHub**, and every pod runs a **Docker Hub image built by GitHub Actions**
 (`docker.io/sidharthhhh/<service>:<git-sha>`). There is no local `docker build`, no
 `k3d image import`, and no second git server.
@@ -227,9 +227,9 @@ git push ──▶ GitHub Actions ──push images──▶ Docker Hub (:<sha>)
 
 # Ship a change (code, UI or config):
 git commit -am "my change"
-git push origin microservice                 # CI builds + pushes images and commits the new tag
+git push origin main                 # CI builds + pushes images and commits the new tag
 kubectl get applications -n argocd -w        # ArgoCD syncs it within ~1 min
-git pull origin microservice                 # get the bot's tag-bump commit before your next push
+git pull origin main                 # get the bot's tag-bump commit before your next push
 
 # Sync immediately instead of waiting for the poll:
 kubectl -n argocd annotate application taskflow argocd.argoproj.io/refresh=hard --overwrite
@@ -255,16 +255,13 @@ k3d cluster delete taskflow
 
 ---
 
-## 6. CI/CD — `microservice` and `main` branches
+## 6. CI/CD — `main` branch only
 
-All workflows in `.github/workflows/` trigger on `microservice` **and** `main`
-(push + pull_request). `master` and `sidharth/feature` do not trigger anything.
-
-> **Which branch does ArgoCD deploy?** The one in its Application's `targetRevision`
-> (currently `microservice`, see `argocd/applications/*.yaml`). CD commits the image-tag bump
-> to the branch that triggered the run, so a push to `main` only reaches the cluster if ArgoCD
-> tracks `main`. Both branches bump the same `values.yaml` lines, so keep them in sync by
-> merging (a tag-bump conflict is resolved by taking the newer tag).
+All workflows in `.github/workflows/` trigger **only** on `main` (push + pull_request).
+Pushes to any other branch (`microservice`, `sidharth/feature`, ...) trigger nothing.
+ArgoCD tracks `main` too (`targetRevision: main` in `argocd/applications/*.yaml`), so the whole
+chain is on one branch: push to `main` → CI/CD builds images and commits the tag bump to `main`
+→ ArgoCD syncs it.
 
 | Workflow               | Trigger paths                                    | What it does |
 |------------------------|--------------------------------------------------|--------------|
@@ -304,7 +301,7 @@ inside the cluster does the deploying.
 | App `OutOfSync` forever | `argocd app diff taskflow` / UI → "Diff" tab |
 | App `Degraded` | `kubectl -n taskflow get pods`, `kubectl -n taskflow describe pod <p>` |
 | `ImagePullBackOff` / `ErrImagePull` | tag not on Docker Hub (CD still running / failed), repo private, or no internet from the cluster |
-| Change not visible after CI finished | ArgoCD still on an old commit: compare `kubectl get application taskflow -n argocd -o jsonpath='{.status.sync.revision}'` with `git ls-remote origin microservice`; then refresh |
+| Change not visible after CI finished | ArgoCD still on an old commit: compare `kubectl get application taskflow -n argocd -o jsonpath='{.status.sync.revision}'` with `git ls-remote origin main`; then refresh |
 | `ComparisonError ... repository not found` | GitHub unreachable or private repo: `kubectl logs -n argocd deploy/argocd-repo-server --tail=50` |
 | Dashboard missing | `kubectl -n taskflow get cm taskflow-grafana-dashboard --show-labels`; `kubectl -n monitoring logs deploy/monitoring-grafana -c grafana-sc-dashboard` |
 | Task API panels empty | Prometheus → Status → Targets → `serviceMonitor/taskflow/taskflow-app` should be UP |

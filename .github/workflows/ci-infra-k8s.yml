@@ -2,7 +2,7 @@ name: CI - Terraform, Kubernetes & Docker Compose
 
 on:
   push:
-    branches: [microservice, main]
+    branches: [main]
     paths:
       - 'terraform/**'
       - 'k8s/**'
@@ -12,7 +12,7 @@ on:
       - 'docker-compose.yml'
       - '.github/workflows/ci-infra-k8s.yml'
   pull_request:
-    branches: [microservice, main]
+    branches: [main]
     paths:
       - 'terraform/**'
       - 'k8s/**'
@@ -73,7 +73,7 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # Helm + ArgoCD validation: the chart ArgoCD deploys must lint, render, and
-  # produce schema-valid Kubernetes objects before it can land on `microservice`.
+  # produce schema-valid Kubernetes objects before it can land on `main`.
   # ---------------------------------------------------------------------------
   validate-helm-argocd:
     name: Helm Lint, Render & Schema Check

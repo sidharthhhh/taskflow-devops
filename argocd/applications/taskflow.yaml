@@ -1,7 +1,7 @@
 # =============================================================================
 #  ArgoCD Application: TaskFlow microservices (Helm chart helm/taskflow)
 #
-#  Argo CD watches the `microservice` branch. Every commit that changes
+#  Argo CD watches the `main` branch. Every commit that changes
 #  helm/taskflow/** (for example CI bumping image.tag) is rendered with
 #  `helm template` and applied to the cluster automatically.
 #
@@ -18,7 +18,7 @@ spec:
   project: taskflow
   source:
     repoURL: https://github.com/sidharthhhh/taskflow-devops.git
-    targetRevision: microservice          # <- branch to track
+    targetRevision: main                  # <- branch to track
     path: helm/taskflow
     helm:
       releaseName: taskflow

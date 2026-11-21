@@ -2,12 +2,12 @@ name: CI - Rust Audit Logs Service
 
 on:
   push:
-    branches: [microservice, main]
+    branches: [main]
     paths:
       - 'services/audit-service/**'
       - '.github/workflows/ci-rust-audit.yml'
   pull_request:
-    branches: [microservice, main]
+    branches: [main]
     paths:
       - 'services/audit-service/**'
       - '.github/workflows/ci-rust-audit.yml'

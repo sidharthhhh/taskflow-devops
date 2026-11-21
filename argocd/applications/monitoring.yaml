@@ -24,7 +24,7 @@ spec:
         valueFiles:
           - $values/monitoring/kube-prometheus-stack-values.yaml
     - repoURL: https://github.com/sidharthhhh/taskflow-devops.git
-      targetRevision: microservice
+      targetRevision: main
       ref: values
   destination:
     server: https://kubernetes.default.svc

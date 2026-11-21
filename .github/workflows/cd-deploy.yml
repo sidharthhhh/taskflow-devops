@@ -1,11 +1,11 @@
 # =============================================================================
 #  CD - GitOps: build & push images, then bump the Helm image tag in git.
 #
-#  Flow (branches: microservice and main):
-#    1. push to microservice/main  ->  build all 7 images, push to Docker Hub as :<git-sha>
+#  Flow (branch: main only):
+#    1. push to main  ->  build all 7 images, push to Docker Hub as :<git-sha>
 #    2. rewrite helm/taskflow/values.yaml  image.tag: <git-sha>  and commit it back
-#       to the SAME branch that triggered the run (github.ref_name)
-#    3. ArgoCD (its Application's targetRevision = the branch it watches) sees the
+#       to the branch that triggered the run (github.ref_name = main)
+#    3. ArgoCD (Application targetRevision: main) sees the
 #       new commit and rolls the cluster forward. No kubectl / cluster credentials in CI.
 #
 #  Rollback = `git revert` the "deploy: bump image tag" commit (ArgoCD syncs it).
@@ -14,7 +14,7 @@ name: CD - Build Images & GitOps Deploy (ArgoCD)
 
 on:
   push:
-    branches: [microservice, main]
+    branches: [main]
     paths:
       - 'services/**'
       - 'frontend/**'
